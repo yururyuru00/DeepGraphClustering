@@ -8,6 +8,7 @@ import numpy as np
 import scipy.sparse as sp
 import torch
 from sklearn.cluster import KMeans
+import sklearn.metrics.cluster as clus
 
 data_path = 'D:\python\GCN\DeepGraphClustering\data'
 
@@ -52,9 +53,9 @@ def load_data(path="D:/python/GCN/DeepGraphClustering/data/cora/", dataset="cora
     features = normalize(features)
     adj = normalize(adj + sp.eye(adj.shape[0])) #ここでA = A+I 更に D^-1*A までしてる
 
-    idx_train = range(140)
-    idx_val = range(200, 500)
-    idx_test = range(500, 1500)
+    idx_train = range(1500)
+    idx_val = range(1500, 2000)
+    idx_test = range(2000, 2708)
 
     features = torch.FloatTensor(np.array(features.todense()))
     labels = torch.LongTensor(np.where(labels)[1])
@@ -83,6 +84,11 @@ def accuracy(output, labels):
     correct = correct.sum()
     return correct / len(labels)
 
+def nmi(output, labels):
+    preds = output.max(1)[1].type_as(labels)
+    preds = preds.cuda().cpu().detach().numpy().copy()
+    labels = labels.cuda().cpu().detach().numpy().copy()
+    return clus.adjusted_mutual_info_score(preds, labels, "arithmetic")
 
 def sparse_mx_to_torch_sparse_tensor(sparse_mx):
     """Convert a scipy sparse matrix to a torch sparse tensor."""

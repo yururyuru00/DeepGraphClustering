@@ -32,7 +32,7 @@ class GCN(nn.Module):
         x1 = F.dropout(x1, self.dropout, training=self.training)
         x2 = torch.tanh(self.gc2(x1, adj))
         x2 = F.dropout(x2, self.dropout, training=self.training)
-        #Zn = x2.cuda().cpu().detach().numpy().copy() #GCによるノード表現を保持
+        Zn = x2.cuda().cpu().detach().numpy().copy() #GCによるノード表現を保持
         #forward で得られる複数のx1~xkを連結したものを出力すればよいはず(まだ未実装)
         
         #Clustering MLP + BatchNormalization
@@ -52,5 +52,5 @@ class GCN(nn.Module):
         xr5 = F.dropout(xr5, self.dropout, training=self.training)
         #RMLPについては最後にdropoutは入れるべきかどうか考慮中
         
-        return [xc5, xr5]
+        return [xc5, xr5], Zn
 

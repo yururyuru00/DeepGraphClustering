@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[6]:
+# In[1]:
 
 
 from __future__ import division
@@ -17,7 +17,7 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 
-from utils import load_data, accuracy, kmeans
+from utils import load_data, accuracy, nmi, kmeans
 from models import GCN
 from layers import FrobeniusNorm
 
@@ -27,8 +27,8 @@ parser.add_argument('--no-cuda', action='store_true', default=False,
                     help='Disables CUDA training.')
 parser.add_argument('--fastmode', action='store_true', default=False,
                     help='Validate during training pass.')
-parser.add_argument('--seed', type=int, default=42, help='Random seed.')
-parser.add_argument('--epochs', type=int, default=120,
+parser.add_argument('--seed', type=int, default=1000, help='Random seed.')
+parser.add_argument('--epochs', type=int, default=2000,
                     help='Number of epochs to train.')
 parser.add_argument('--lr', type=float, default=0.01,
                     help='Initial learning rate.')
@@ -49,6 +49,8 @@ if args.cuda:
 
 # Load data
 adj, features, labels, idx_train, idx_val, idx_test = load_data()
+labels_sclump = np.loadtxt('D:/python/GCN/DeepGraphClustering/data/experiment/sclump_label.csv')
+labels_sclump = torch.LongTensor(labels_sclump).clone().to('cuda')
 
 # Model and optimizer
 model = GCN(nfeat=features.shape[1],
@@ -68,75 +70,86 @@ if args.cuda: #cpuがかgpuどちらのtensorを使うかの処理
     idx_val = idx_val.cuda()
     idx_test = idx_test.cuda()
 
-def train(epoch, loss1, loss2, acc):
+def train(epoch, log):
     t = time.time()
     model.train()
     optimizer.zero_grad()
     [output1, output2], Zn = model(features, adj)
-    #features:特徴行列, adj:隣接行列を渡してforward実行
     #kmeans_labels = kmeans(Zn, torch.max(labels)+1)
-    loss_train1 = F.nll_loss(output1[idx_train], labels[idx_train]) 
-    #loss_train1はtensor型　nll_lossはsoftmax無しのクロスエントロピーのみのロス関数
+    loss_train1 = F.nll_loss(output1[idx_train], labels_sclump[idx_train]) #クロスエントロピー
     loss_train2 = loss_fro(output2[idx_train], features[idx_train]) #自作損失関数
-    loss_train1.backward()
+    loss_train1.backward() #更にbackwardならretain_graph = trueにすること
     #loss_train2.backward()
     optimizer.step()
-    acc_train = accuracy(output1[idx_train], labels[idx_train])
+    acc_train = nmi(output1[idx_train], labels[idx_train])
+    #from IPython.core.debugger import Pdb; Pdb().set_trace()
     
-    loss1.append(loss_train1)
-    loss2.append(loss_train2)
-    acc.append(acc_train)
-
     if not args.fastmode: #defaltはFalseなのでここの処理は行う
-        # Evaluate validation set performance separately,
         # deactivates dropout during validation run.
         model.eval()
-        [output1, output2], Zn = model(features, adj)
-    
+        [output1, output2], Zn = model(features, adj)  
     #kmeans_labels = kmeans(Zn, torch.max(labels)+1)
-    loss_val1 = F.nll_loss(output1[idx_val], labels[idx_val])
-    #loss_val2 = loss_fro(output2[idx_val], features[idx_val])
-    acc_val = accuracy(output1[idx_val], labels[idx_val])
-    print('Epoch:{:04d}'.format(epoch+1),
-          'lss1_train: {:.4f}'.format(loss_train1.item()),
-          'lss2_train: {:.4f}'.format(loss_train2.item()),
-          'acc_train: {:.4f}'.format(acc_train.item()),
-          'lss_val: {:.4f}'.format(loss_val1.item()),
-          'acc_val: {:.4f}'.format(acc_val.item()),
-          'time: {:.4f}s'.format(time.time() - t))
+    loss_val1 = F.nll_loss(output1[idx_val], labels_sclump[idx_val])
+    loss_val2 = loss_fro(output2[idx_val], features[idx_val])
+    acc_val = nmi(output1[idx_val], labels[idx_val]) #acc_valはnmiの場合，npで返ってくる
+    
+    log['loss_train1'].append(loss_train1.cuda().cpu().detach().numpy().copy())
+    log['loss_train2'].append(loss_train2.cuda().cpu().detach().numpy().copy()/len(idx_train))
+    log['acc_train'].append(acc_train)
+    log['loss_val1'].append(loss_val1.cuda().cpu().detach().numpy().copy())
+    log['loss_val2'].append(loss_val2.cuda().cpu().detach().numpy().copy()/len(idx_val))
+    log['acc_val'].append(acc_val)
 
 
-def test():
+def test(log):
     model.eval()
     [output1, output2], Zn = model(features, adj)
-    np.savetxt('D:\python\GCN\DeepGraphClustering\data\experiment\Zn_labelbased.csv', Zn)
-    #kmeans_labels = kmeans(Zn, torch.max(labels)+1)
-    loss_test1 = F.nll_loss(output1[idx_test], labels[idx_test])
-    loss_test2 = loss_fro(output2[idx_test], features[idx_test]) #自作損失関数
-    acc_test1 = accuracy(output1[idx_test], labels[idx_test])
-    print("Test set results:",
-          "lss1= {:.4f}".format(loss_test1.item()),
-          "lss2= {:.4f}".format(loss_test2.item()),
-          "accuracy= {:.4f}".format(acc_test1.item()))
+    np.savetxt('D:\python\GCN\DeepGraphClustering\data\experiment\Zn_sclump_1on2off.csv', Zn)
+    kmeans_labels = kmeans(Zn, torch.max(labels)+1)
+    acc_test = nmi(output1[idx_test], labels[idx_test])
+    log['acc_test'] = acc_test
 
 
 # Train model
 t_total = time.time()
-loss1, loss2, acc = [], [], []
+log = {'loss_train1':[], 'loss_train2':[], 'acc_train':[], 'loss_val1':[], 
+       'loss_val2':[], 'acc_val':[], 'acc_test':0}
 for epoch in range(args.epochs):
-    train(epoch, loss1, loss2, acc)
+    train(epoch, log)
 print("Optimization Finished!")
-print("Total time elapsed: {:.4f}s".format(time.time() - t_total))
-
-fig = plt.figure(figsize=(32, 16))
-ax1, ax2, ax3 = fig.add_subplot(1, 3, 1), fig.add_subplot(1, 3, 2), fig.add_subplot(1, 3, 3)
-ax1.plot(loss1)
-ax2.plot(loss2)
-ax3.plot(acc)
-#plt.savefig('D:\python\GCN\DeepGraphClustering\data\experiment\loss+acc_clusterbased.png')
+print("Total time elapsed: {:.4f}s\n".format(time.time() - t_total))
 
 # Testing
-test()
+test(log)
+
+#log + plot
+for epoch in range(args.epochs)[::10]:
+    print('Epoch:{:04d}'.format(epoch),
+          'lss1_train: {:.4f}'.format(log['loss_train1'][epoch]),
+          'lss2_train: {:.4f}'.format(log['loss_train2'][epoch]),
+          'acc_train: {:.4f}'.format(log['acc_train'][epoch]),
+          'lss1_val: {:.4f}'.format(log['loss_val1'][epoch]),
+          'lss2_val: {:.4f}'.format(log['loss_val2'][epoch]),
+          'acc_val: {:.4f}'.format(log['acc_val'][epoch]))
+print("#################\nTest set results:", "accuracy= {:.4f}".format(log['acc_test']))
+fig = plt.figure(figsize=(32, 16))
+ax1, ax2, ax3 = fig.add_subplot(1, 3, 1), fig.add_subplot(1, 3, 2), fig.add_subplot(1, 3, 3)
+ax1.plot(log['loss_train1'], label='loss_train1')
+ax1.plot(log['loss_val1'], label='loss_val1')
+ax1.legend(loc='upper right', prop={'size': 25})
+ax1.tick_params(axis='x', labelsize='23')
+ax1.tick_params(axis='y', labelsize='23')
+ax2.plot(log['loss_train2'], label='loss_train2')
+ax2.plot(log['loss_val2'], label='loss_val2')
+ax2.legend(loc='upper right', prop={'size': 25})
+ax2.tick_params(axis='x', labelsize='23')
+ax2.tick_params(axis='y', labelsize='23')
+ax3.plot(log['acc_train'], label='nmi_train')
+ax3.plot(log['acc_val'], label='nmi_val')
+ax3.legend(loc='lower right', prop={'size': 25})
+ax3.tick_params(axis='x', labelsize='23')
+ax3.tick_params(axis='y', labelsize='23')
+plt.savefig('D:\python\GCN\DeepGraphClustering\data\experiment\log_sclump_1on2off.png')
 
 
 # In[ ]:
