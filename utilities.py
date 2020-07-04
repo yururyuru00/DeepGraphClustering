@@ -6,6 +6,7 @@ import sklearn.metrics.cluster as clus
 
 data_path = 'D:\python\GCN\DeepGraphClustering\data'
 
+#kmeans
 def kmeans(data, n_of_clusters):
     n_of_clusters = n_of_clusters.cuda().cpu().detach().numpy().copy()
     k_means = KMeans(n_of_clusters, n_init=10, random_state=0, tol=0.0000001)

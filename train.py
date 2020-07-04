@@ -16,7 +16,7 @@ from utilities import load_data, accuracy, nmi, purity, kmeans
 from models import GCN
 from layers import FrobeniusNorm, purity_loss
 
-# Training settings
+# Settings
 parser = argparse.ArgumentParser()
 parser.add_argument('--no-cuda', action='store_true', default=False,
                     help='Disables CUDA training.')
