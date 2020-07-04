@@ -1,14 +1,7 @@
-#!/usr/bin/env python
-# coding: utf-8
-
-# In[ ]:
-
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from layers import GraphConvolution
-
 
 class GCN(nn.Module):
     def __init__(self, nfeat, nhid, nclass, dropout):
@@ -53,4 +46,3 @@ class GCN(nn.Module):
         #RMLPについては最後にdropoutは入れるべきかどうか考慮中
         
         return [xc5, xr5], Zn
-

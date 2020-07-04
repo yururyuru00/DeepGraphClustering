@@ -1,9 +1,3 @@
-#!/usr/bin/env python
-# coding: utf-8
-
-# In[ ]:
-
-
 import math
 import numpy as np
 from numpy import linalg
@@ -69,10 +63,3 @@ class purity_loss(Module):
         for k in range(clus_size):
             sum += torch.max(table[k])
         return sum/size
-
-
-# In[ ]:
-
-
-
-

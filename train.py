@@ -1,9 +1,3 @@
-#!/usr/bin/env python
-# coding: utf-8
-
-# In[7]:
-
-
 from __future__ import division
 from __future__ import print_function
 
@@ -18,7 +12,7 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 
-from utils import load_data, accuracy, nmi, purity, kmeans
+from utilities import load_data, accuracy, nmi, purity, kmeans
 from models import GCN
 from layers import FrobeniusNorm, purity_loss
 
@@ -157,10 +151,3 @@ ax4.tick_params(axis='x', labelsize='23')
 ax4.tick_params(axis='y', labelsize='23')
 ax4.set_ylim(min(log['pur_train']), math.ceil(10*max(log['pur_train']))/10)
 plt.savefig('D:\python\GCN\DeepGraphClustering\data\experiment\log_sclump_1on2off.png')
-
-
-# In[ ]:
-
-
-
-
