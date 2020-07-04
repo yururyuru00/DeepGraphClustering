@@ -5,6 +5,7 @@
 
 
 import math
+import numpy as np
 from numpy import linalg
 
 import torch
@@ -50,6 +51,24 @@ class FrobeniusNorm(Module):
     def forward(self, inputs, targets):
         diff = inputs - targets
         return torch.norm(diff)
+    
+class purity_loss(Module):
+    def __init__(self):
+        super(purity_loss, self).__init__()
+
+    def forward(self, inputs, targets):
+        size = torch.LongTensor([len(targets)])[0]
+        inputs = torch.max(inputs, 1).indices.cuda().cpu().detach().numpy().copy()
+        targets = targets.cuda().cpu().detach().numpy().copy()
+        clus_size = int(np.max(inputs))+1
+        clas_size = int(np.max(targets))+1
+        table = torch.zeros(clus_size, clas_size)
+        for i in range(size):
+            table[inputs[i]][targets[i]] += 1
+        sum = torch.zeros(1, requires_grad=True)
+        for k in range(clus_size):
+            sum += torch.max(table[k])
+        return sum/size
 
 
 # In[ ]:

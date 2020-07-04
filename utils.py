@@ -14,7 +14,7 @@ data_path = 'D:\python\GCN\DeepGraphClustering\data'
 
 def kmeans(data, n_of_clusters):
     n_of_clusters = n_of_clusters.cuda().cpu().detach().numpy().copy()
-    k_means = KMeans(n_of_clusters, n_init=10, tol=0.0000001)
+    k_means = KMeans(n_of_clusters, n_init=10, random_state=0, tol=0.0000001)
     k_means.fit(data)
     kmeans_labels = torch.LongTensor(k_means.labels_).clone().to('cuda')
     return kmeans_labels
@@ -52,20 +52,14 @@ def load_data(path="D:/python/GCN/DeepGraphClustering/data/cora/", dataset="cora
     adj = adj + adj.T.multiply(adj.T > adj) - adj.multiply(adj.T > adj)
     features = normalize(features)
     adj = normalize(adj + sp.eye(adj.shape[0])) #ここでA = A+I 更に D^-1*A までしてる
-
-    idx_train = range(1500)
-    idx_val = range(1500, 2000)
-    idx_test = range(2000, 2708)
+    idx_train = range(2708)
 
     features = torch.FloatTensor(np.array(features.todense()))
     labels = torch.LongTensor(np.where(labels)[1])
     adj = sparse_mx_to_torch_sparse_tensor(adj) #ここで各入力A, X, lをtensor型に変更
-    
     idx_train = torch.LongTensor(idx_train)
-    idx_val = torch.LongTensor(idx_val)
-    idx_test = torch.LongTensor(idx_test)
 
-    return adj, features, labels, idx_train, idx_val, idx_test
+    return adj, features, labels, idx_train
 
 
 def normalize(mx):
@@ -89,6 +83,22 @@ def nmi(output, labels):
     preds = preds.cuda().cpu().detach().numpy().copy()
     labels = labels.cuda().cpu().detach().numpy().copy()
     return clus.adjusted_mutual_info_score(preds, labels, "arithmetic")
+
+def purity(output, labels):
+    preds = output.max(1)[1].type_as(labels)
+    preds = preds.cuda().cpu().detach().numpy().copy()
+    labels = labels.cuda().cpu().detach().numpy().copy()
+    usr_size = len(preds)
+    clus_size = np.max(preds)+1
+    clas_size = np.max(labels)+1
+    
+    table = np.zeros((clus_size, clas_size))
+    for i in range(usr_size):
+        table[preds[i]][labels[i]] += 1
+    sum = 0
+    for k in range(clus_size):
+        sum += np.amax(table[k])
+    return sum/usr_size
 
 def sparse_mx_to_torch_sparse_tensor(sparse_mx):
     """Convert a scipy sparse matrix to a torch sparse tensor."""
