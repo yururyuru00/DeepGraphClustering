@@ -27,7 +27,7 @@ class GraphConvolution(Module):
         if self.bias is not None:
             self.bias.data.uniform_(-stdv, stdv)
 
-    def forward(self, input, adj): #input:特徴行列Z, adj:隣接行列Aとして渡される
+    def forward(self, input, adj): #input:特徴行列Z,    adj:隣接行列Aとして渡される
         support = torch.mm(input, self.weight) #畳み込み DAZWの内，ZW(=support)の演算
         output = torch.spmm(adj, support) #畳み込み DAZWの内，(DA)supportの演算
         if self.bias is not None: #今回はbiasあり
