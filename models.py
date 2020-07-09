@@ -7,7 +7,6 @@ class GCN(nn.Module):
     def __init__(self, nfeat, nhid, nclass, dropout):
         super(GCN, self).__init__()
 
-        #hidden_layer=[128, 64, 32, 64, 32]
         self.gc1 = GraphConvolution(nfeat, nhid['gc'][0])
         self.gc2 = GraphConvolution(nhid['gc'][0], nhid['gc'][1])
         
@@ -30,7 +29,7 @@ class GCN(nn.Module):
         x2 = torch.cat([x1, x2], dim=1)
         Zn = x2.cuda().cpu().detach().numpy().copy() #GCによるノード表現を保持
         #forward で得られる複数のx1~xkを連結したものを出力すればよいはず(まだ未実装)
-        
+
         #Clustering MLP + BatchNormalization
         xc3 = F.relu(self.bn1(self.affc1(x2)))
         xc4 = F.relu(self.bn2(self.affc2(xc3)))

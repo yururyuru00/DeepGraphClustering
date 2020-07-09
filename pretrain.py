@@ -25,12 +25,12 @@ parser.add_argument('--fastmode', action='store_true', default=False,
 parser.add_argument('--seed', type=int, default=1000, help='Random seed.')
 parser.add_argument('--epochs', type=int, default=500,
                     help='Number of epochs to train.')
-parser.add_argume``nt('--lr', type=float, default=0.01,
+parser.add_argument('--lr', type=float, default=0.01,
                     help='Initial learning rate.')
 parser.add_argument('--weight_decay', type=float, default=5e-4,
                     help='Weight decay (L2 loss on parameters).')
-parser.add_argument('--hidden', type=dict, default={"gc":[128,64], 'affc':[64,32], 
-                    'affr':[128,64]}, help='Number of hidden units.')
+parser.add_argument('--hidden', type=dict, default={"gc":[512,200], 
+                    help='Number of hidden units.')
 parser.add_argument('--dropout', type=float, default=0.5,
                     help='Dropout rate (1 - keep probability).')
 
@@ -77,15 +77,33 @@ def train(epoch, log):
     loss_train1 = F.nll_loss(output1[idx_train], label[idx_train]) #クロスエントロピー
     loss_train2 = loss_fro(output2[idx_train], features[idx_train]) #自作損失関数
     loss_train1.backward() #更にbackwardならretain_graph = Trueにすること
-    loss_train2.backward()
+    #loss_train2.backward()
     optimizer.step()
     nmi_train, pur_train = nmi(output1[idx_train], labels[idx_train]), purity(output1[idx_train], labels[idx_train])
     #from IPython.core.debugger import Pdb; Pdb().set_trace()
+    
+    '''if not args.fastmode: #defaltはFalseなのでここの処理は行う
+        # deactivates dropout during validation run.
+        model.eval()
+        [output1, output2], Zn = model(features, adj)  
+    #kmeans_labels = kmeans(Zn, torch.max(labels)+1)
+    loss_val1 = F.nll_loss(output1[idx_val], labels_sclump[idx_val])
+    loss_val2 = loss_fro(output2[idx_val], features[idx_val])
+    acc_val = nmi(output1[idx_val], labels[idx_val]) #acc_valはnmiの場合，npで返ってくる'''
+    
+    log['loss_train1'].append(loss_train1.cuda().cpu().detach().numpy().copy())
+    log['loss_train2'].append(loss_train2.cuda().cpu().detach().numpy().copy()/len(idx_train))
+    log['nmi_train'].append(nmi_train)
+    log['pur_train'].append(pur_train)
+    '''log['loss_val1'].append(loss_val1.cuda().cpu().detach().numpy().copy())
+    log['loss_val2'].append(loss_val2.cuda().cpu().detach().numpy().copy()/len(idx_val))
+    log['acc_val'].append(acc_val)'''
+
 
 def test(log):
     model.eval() #evalモードだとdropoutが機能しなくなる，trainモードはもちろん機能する
     [output1, output2], Zn = model(features, adj)
-    np.savetxt('data/experiment/Zn_sclump_1on2on.csv', Zn)
+    np.savetxt('D:\python\GCN\DeepGraphClustering\data\experiment\Zn_sclump_1on2off.csv', Zn)
     nmi_test, pur_test = nmi(output1[idx_train], labels[idx_train]), purity(output1[idx_train], labels[idx_train])
     log['nmi_test'], log['pur_test'] = nmi_test, pur_test
 
@@ -132,4 +150,4 @@ ax4.legend(loc='lower right', prop={'size': 25})
 ax4.tick_params(axis='x', labelsize='23')
 ax4.tick_params(axis='y', labelsize='23')
 ax4.set_ylim(min(log['pur_train']), math.ceil(10*max(log['pur_train']))/10)
-plt.savefig('data/experiment/\log_sclump_1on2on.png')
+plt.savefig('D:\python\GCN\DeepGraphClustering\data\experiment\log_sclump_1on2off.png')
