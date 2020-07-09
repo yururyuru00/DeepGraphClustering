@@ -13,7 +13,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 
 from utilities import load_data, accuracy, nmi, purity, kmeans
-from models import GCN
+from models import DGC, GCN
 from layers import FrobeniusNorm, purity_loss
 
 #settingargs check
@@ -25,7 +25,7 @@ parser.add_argument('--fastmode', action='store_true', default=False,
 parser.add_argument('--seed', type=int, default=1000, help='Random seed.')
 parser.add_argument('--epochs', type=int, default=500,
                     help='Number of epochs to train.')
-parser.add_argume``nt('--lr', type=float, default=0.01,
+parser.add_argument('--lr', type=float, default=0.01,
                     help='Initial learning rate.')
 parser.add_argument('--weight_decay', type=float, default=5e-4,
                     help='Weight decay (L2 loss on parameters).')
@@ -48,7 +48,7 @@ labels_sclump = np.loadtxt('D:/python/GCN/DeepGraphClustering/data/experiment/sc
 labels_sclump = torch.LongTensor(labels_sclump).clone().to('cuda')
 
 # Model and optimizer
-model = GCN(nfeat=features.shape[1],
+model = DGC(nfeat=features.shape[1],
             nhid=args.hidden,
             nclass=labels.max().item() + 1,
             dropout=args.dropout)

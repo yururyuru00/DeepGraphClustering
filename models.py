@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from layers import GraphConvolution
 
-class GCN(nn.Module):
+class DGC(nn.Module):
     def __init__(self, nfeat, nhid, nclass, dropout):
         super(GCN, self).__init__()
 
@@ -45,3 +45,20 @@ class GCN(nn.Module):
         #RMLPについては最後にdropoutは入れるべきかどうか考慮中
         
         return [xc5, xr5], Zn
+
+class GCN(nn.Module):
+    def __init__(self, nfeat, nhid, dropout):
+        super(GCN, self).__init__()
+
+        #nhid = [512, 200]
+        self.gc1 = GraphConvolution(nfeat, nhid[0])
+        self.gc2 = GraphConvolution(nhid[0], nhid[1])
+        self.dropout = dropout
+
+    def forward(self, x, adj): #x:特徴行列, adj:隣接行列として渡される
+        x1 = torch.tanh(self.gc1(x, adj)) #第1層目のGCクラスのforward実行➡relu実行
+        x1 = F.dropout(x1, self.dropout, training=self.training)
+        x2 = torch.tanh(self.gc2(x1, adj))
+        x2 = F.dropout(x2, self.dropout, training=self.training)
+        
+        return x2
