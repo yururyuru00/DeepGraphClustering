@@ -9,6 +9,7 @@ data_path = 'D:\python\GCN\DeepGraphClustering\data'
 #kmeans
 def kmeans(data, n_of_clusters):
     n_of_clusters = n_of_clusters.cuda().cpu().detach().numpy().copy()
+    #ラベルの順序(etc. C1,C1,C2,C2,...)固定のためrandom_seedも0で固定
     k_means = KMeans(n_of_clusters, n_init=10, random_state=0, tol=0.0000001)
     k_means.fit(data)
     kmeans_labels = torch.LongTensor(k_means.labels_).clone().to('cuda')

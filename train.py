@@ -1,6 +1,7 @@
 from __future__ import division
 from __future__ import print_function
 
+from tqdm import tqdm
 import math
 import sys
 import time
@@ -19,20 +20,20 @@ from layers import FrobeniusNorm, purity_loss
 #settingargs check
 parser = argparse.ArgumentParser()
 parser.add_argument('--no-cuda', action='store_true', default=False,
-                    help='Disables CUDA training.')
+                                help='Disables CUDA training.')
 parser.add_argument('--fastmode', action='store_true', default=False,
-                    help='Validate during training pass.')
+                                help='Validate during training pass.')
 parser.add_argument('--seed', type=int, default=1000, help='Random seed.')
-parser.add_argument('--epochs', type=int, default=500,
-                    help='Number of epochs to train.')
+parser.add_argument('--epochs', type=int, default=200,
+                                help='Number of epochs to train.')
 parser.add_argument('--lr', type=float, default=0.01,
-                    help='Initial learning rate.')
+                                help='Initial learning rate.')
 parser.add_argument('--weight_decay', type=float, default=5e-4,
-                    help='Weight decay (L2 loss on parameters).')
-parser.add_argument('--hidden', type=dict, default={"gc":[128,64], 'affc':[64,32], 
-                    'affr':[128,64]}, help='Number of hidden units.')
+                                help='Weight decay (L2 loss on parameters).')
+parser.add_argument('--hidden', type=dict, default={'gc':[512,200],
+                                'affc':[64,32], 'affr':[128,64]},  help='Number of hidden units.')
 parser.add_argument('--dropout', type=float, default=0.5,
-                    help='Dropout rate (1 - keep probability).')
+                                help='Dropout rate (1 - keep probability).')
 
 args = parser.parse_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
@@ -44,14 +45,14 @@ if args.cuda:
 
 # Load data
 adj, features, labels, idx_train = load_data()
-labels_sclump = np.loadtxt('D:/python/GCN/DeepGraphClustering/data/experiment/sclump_label.csv')
+labels_sclump = np.loadtxt('D:/python/GCN/DeepGraphClustering/data/experiment/SClump_label.csv')
 labels_sclump = torch.LongTensor(labels_sclump).clone().to('cuda')
 
 # Model and optimizer
-model = DGC(nfeat=features.shape[1],
-            nhid=args.hidden,
-            nclass=labels.max().item() + 1,
-            dropout=args.dropout)
+base_model = GCN(nfeat=features.shape[1], nhid=args.hidden['gc']).cuda()
+base_model.load_state_dict(torch.load('model_gcn'))
+model = DGC(base=base_model, nfeat=features.shape[1], nhid=args.hidden,
+                    nclass=labels.max().item()+1, dropout=args.dropout)
 loss_fro = FrobeniusNorm()
 optimizer = optim.Adam(model.parameters(),
                        lr=args.lr, weight_decay=args.weight_decay) #lrが学習係数
@@ -68,24 +69,22 @@ def train(epoch, log):
     model.train()
     optimizer.zero_grad()
     [output1, output2], Zn = model(features, adj)
-    '''if(epoch%100==0 and np.random.rand() <= epoch/args.epochs): #epoch/epochsの確率でkmeansする
-        label = kmeans(Zn, torch.max(labels)+1)
-    else:
-        label = labels_sclump'''
-    label = labels_sclump
-    #labelの順序が変わるからおかしくなる
-    loss_train1 = F.nll_loss(output1[idx_train], label[idx_train]) #クロスエントロピー
+    #pseudo_label = kmeans(Zn, torch.max(labels)+1)
+    loss_train1 = F.nll_loss(output1[idx_train], labels_sclump[idx_train]) #クロスエントロピー
     loss_train2 = loss_fro(output2[idx_train], features[idx_train]) #自作損失関数
-    loss_train1.backward() #更にbackwardならretain_graph = Trueにすること
+    loss_train1.backward(retain_graph=True) #更にbackwardならretain_graph = Trueにすること
     loss_train2.backward()
     optimizer.step()
     nmi_train, pur_train = nmi(output1[idx_train], labels[idx_train]), purity(output1[idx_train], labels[idx_train])
-    #from IPython.core.debugger import Pdb; Pdb().set_trace()
+    log['loss_train1'].append(loss_train1.cuda().cpu().detach().item())
+    log['loss_train2'].append(loss_train2.cuda().cpu().detach().item())
+    log['nmi_train'].append(nmi_train)
+    log['pur_train'].append(pur_train)
 
 def test(log):
     model.eval() #evalモードだとdropoutが機能しなくなる，trainモードはもちろん機能する
     [output1, output2], Zn = model(features, adj)
-    np.savetxt('data/experiment/Zn_sclump_1on2on.csv', Zn)
+    np.savetxt('data/experiment/Zn_fixedSCL+pretrain_1on2on.csv', Zn)
     nmi_test, pur_test = nmi(output1[idx_train], labels[idx_train]), purity(output1[idx_train], labels[idx_train])
     log['nmi_test'], log['pur_test'] = nmi_test, pur_test
 
@@ -93,10 +92,11 @@ def test(log):
 # Train model
 t_total = time.time()
 log = {'loss_train1':[], 'loss_train2':[], 'nmi_train':[], 'pur_train':[], 
-       'nmi_test':0, 'pur_test':0}
-for epoch in range(args.epochs):
+           'nmi_test':0, 'pur_test':0}
+print('-----------------Start Training-----------------' + '\n')
+for epoch in tqdm(range(args.epochs)):
     train(epoch, log)
-print("Optimization Finished!")
+print("-----------------Optimization Finished!-----------------")
 print("Total time elapsed: {:.4f}s\n".format(time.time() - t_total))
 
 # Testing
@@ -132,4 +132,4 @@ ax4.legend(loc='lower right', prop={'size': 25})
 ax4.tick_params(axis='x', labelsize='23')
 ax4.tick_params(axis='y', labelsize='23')
 ax4.set_ylim(min(log['pur_train']), math.ceil(10*max(log['pur_train']))/10)
-plt.savefig('data/experiment/\log_sclump_1on2on.png')
+plt.savefig('data/experiment/log_fixedSCL+pretrain_1on2on.png')

@@ -23,7 +23,7 @@ parser.add_argument('--no-cuda', action='store_true', default=False,
 parser.add_argument('--fastmode', action='store_true', default=False,
                     help='Validate during training pass.')
 parser.add_argument('--seed', type=int, default=1000, help='Random seed.')
-parser.add_argument('--epochs', type=int, default=20000,
+parser.add_argument('--epochs', type=int, default=500,
                     help='Number of epochs to train.')
 parser.add_argument('--lr', type=float, default=0.01,
                     help='Initial learning rate.')
@@ -47,9 +47,7 @@ adj, features, _, idx_train = load_data() #pretrainではラベルは使わな�
 dane_emb = np.loadtxt('./data/experiment/DANEemb.csv')
 
 # Model and optimizer
-model = GCN(nfeat=features.shape[1],
-            nhid=args.hidden,
-            dropout=args.dropout)
+model = GCN(nfeat=features.shape[1], nhid=args.hidden)
 loss_f = FrobeniusNorm()
 optimizer = optim.Adam(model.parameters(),
                        lr=args.lr, weight_decay=args.weight_decay) #lrが学習係数
