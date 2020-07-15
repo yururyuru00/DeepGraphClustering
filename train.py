@@ -13,7 +13,7 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 
-from utilities import load_data, accuracy, nmi, purity, kmeans
+from utilities import load_data, accuracy, nmi, purity, kmeans, remake_to_labelorder
 from models import DGC, GCN
 from layers import FrobeniusNorm, purity_loss
 
@@ -45,8 +45,11 @@ if args.cuda:
 
 # Load data
 adj, features, labels, idx_train = load_data()
+nmi_best, Zn_best, pseudo_label = 0., None, None
 labels_sclump = np.loadtxt('D:/python/GCN/DeepGraphClustering/data/experiment/SClump_label.csv')
 labels_sclump = torch.LongTensor(labels_sclump).clone().to('cuda')
+dane_emb = np.loadtxt('./data/experiment/DANEemb.csv')
+dane_emb = torch.FloatTensor(dane_emb).cuda()
 
 # Model and optimizer
 base_model = GCN(nfeat=features.shape[1], nhid=args.hidden['gc']).cuda()
@@ -65,26 +68,32 @@ if args.cuda: #cpuかgpuどちらのtensorを使うかの処理
     idx_train = idx_train.cuda()
 
 def train(epoch, log):
+    global pseudo_label, nmi_best, Zn_best
     t = time.time()
     model.train()
     optimizer.zero_grad()
     [output1, output2], Zn = model(features, adj)
-    #pseudo_label = kmeans(Zn, torch.max(labels)+1)
-    loss_train1 = F.nll_loss(output1[idx_train], labels_sclump[idx_train]) #クロスエントロピー
+    if(epoch%50 == 0):
+        pseudo_label = kmeans(Zn, torch.max(labels)+1)
+    output1_ = remake_to_labelorder(output1, pseudo_label)
+    loss_train1 = F.nll_loss(output1_[idx_train], pseudo_label[idx_train]) #クロスエントロピー
     loss_train2 = loss_fro(output2[idx_train], features[idx_train]) #自作損失関数
     loss_train1.backward(retain_graph=True) #更にbackwardならretain_graph = Trueにすること
     loss_train2.backward()
     optimizer.step()
-    nmi_train, pur_train = nmi(output1[idx_train], labels[idx_train]), purity(output1[idx_train], labels[idx_train])
+    nmi_train, pur_train = nmi(output1_[idx_train], labels[idx_train]), purity(output1[idx_train], labels[idx_train])
     log['loss_train1'].append(loss_train1.cuda().cpu().detach().item())
     log['loss_train2'].append(loss_train2.cuda().cpu().detach().item())
     log['nmi_train'].append(nmi_train)
     log['pur_train'].append(pur_train)
+    if(nmi_best < nmi_train):
+        nmi_best = nmi_train
+        Zn_best = Zn
+
 
 def test(log):
     model.eval() #evalモードだとdropoutが機能しなくなる，trainモードはもちろん機能する
     [output1, output2], Zn = model(features, adj)
-    np.savetxt('data/experiment/Zn_fixedSCL+pretrain_1on2on.csv', Zn)
     nmi_test, pur_test = nmi(output1[idx_train], labels[idx_train]), purity(output1[idx_train], labels[idx_train])
     log['nmi_test'], log['pur_test'] = nmi_test, pur_test
 
@@ -98,6 +107,7 @@ for epoch in tqdm(range(args.epochs)):
     train(epoch, log)
 print("-----------------Optimization Finished!-----------------")
 print("Total time elapsed: {:.4f}s\n".format(time.time() - t_total))
+np.savetxt('data/experiment/BestZn_kmeans50+pretrain_.csv', Zn_best)
 
 # Testing
 test(log)
@@ -132,4 +142,4 @@ ax4.legend(loc='lower right', prop={'size': 25})
 ax4.tick_params(axis='x', labelsize='23')
 ax4.tick_params(axis='y', labelsize='23')
 ax4.set_ylim(min(log['pur_train']), math.ceil(10*max(log['pur_train']))/10)
-plt.savefig('data/experiment/log_fixedSCL+pretrain_1on2on.png')
+plt.savefig('data/experiment/log_kmeans50+pretrain.png')

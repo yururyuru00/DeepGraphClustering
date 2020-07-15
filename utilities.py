@@ -3,8 +3,58 @@ import scipy.sparse as sp
 import torch
 from sklearn.cluster import KMeans
 import sklearn.metrics.cluster as clus
+import itertools
+import networkx as nx
 
 data_path = 'D:\python\GCN\DeepGraphClustering\data'
+
+def  remake_to_labelorder(pred_tensor: torch.tensor, label_: list) -> dict:
+    pred_onehot = torch.tensor([torch.argmax(pred) for pred in pred_tensor])
+    n = max(label_)+1
+    pred_ids, label_ids = {}, {}
+    for vid, (pred_id, label_id) in enumerate(zip(pred_onehot, label_)):
+        if(pred_id in pred_ids):
+            pred_ids[pred_id].append(vid)
+        else:
+            pred_ids[pred_id] = []
+            pred_ids[pred_id].append(vid)
+        if(label_id in label_ids):
+            label_ids[label_id].append(vid)
+        else:
+            label_ids[label_id] = []
+            label_ids[label_id].append(vid)
+
+    pred_pairs, label_pairs = [set() for _ in range(n)], [set() for _ in range(n)]
+    for pred_key, label_key in zip(pred_ids.keys(), label_ids.keys()):
+        pred_pairs[pred_key] |= set([pair for pair in itertools.combinations(pred_ids[pred_key], 2)])
+        label_pairs[label_key] |= set([pair for pair in itertools.combinations(label_ids[label_key], 2)])
+
+    table = np.array([[len(label_pair&pred_pair) for label_pair in label_pairs] for pred_pair in pred_pairs])
+
+    G = nx.DiGraph()
+    G.add_node('s', demand = -n)
+    G.add_node('t', demand = n)
+    for pred_id in range(n):
+        G.add_edge('s', 'p_{}'.format(pred_id), weight=0, capacity=1)
+    for source, weights in enumerate(table):
+        for target, w in enumerate(weights):
+            G.add_edge('p_{}'.format(source), 'l_{}'.format(target), weight=-w, capacity=1)
+    for label_id in range(n):
+        G.add_edge('l_{}'.format(label_id), 't', weight=0, capacity=1)
+
+    clus_label_map = {}
+    result = nx.min_cost_flow(G)
+    for i, d in result.items():
+        for j, f in d.items():
+            if f and i[0]=='p' and j[0]=='l': 
+                clus_label_map[int(i[2])] = int(j[2])
+    for vi, pred_vi in enumerate(pred_tensor):
+        source, target = pred_onehot[vi], clus_label_map[pred_onehot[vi]]
+        buff = pred_vi[source].cpu().detach().item()
+        pred_vi[source] = pred_vi[target]
+        pred_vi[target] = buff
+    return pred_tensor
+
 
 #kmeans
 def kmeans(data, n_of_clusters):
@@ -22,6 +72,8 @@ def encode_onehot(labels):
     labels_onehot = np.array(list(map(classes_dict.get, labels)),
                              dtype=np.int32)
     return labels_onehot
+
+
 
 
 def load_data(path="D:/python/GCN/DeepGraphClustering/data/cora/", dataset="cora"):
