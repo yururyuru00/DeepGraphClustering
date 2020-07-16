@@ -5,12 +5,15 @@ from sklearn.cluster import KMeans
 import sklearn.metrics.cluster as clus
 import itertools
 import networkx as nx
+from torch.autograd import Variable
 
 data_path = 'D:\python\GCN\DeepGraphClustering\data'
 
 def  remake_to_labelorder(pred_tensor: torch.tensor, label_: list) -> dict:
-    pred_onehot = torch.tensor([torch.argmax(pred) for pred in pred_tensor])
-    n = max(label_)+1
+    pred_ = pred_tensor.cuda().cpu().detach().numpy().copy()
+    label_ = label_.cuda().cpu().detach().numpy().copy()
+    pred_onehot = np.array([np.argmax(i) for i in pred_])
+    n_of_clusters = max(label_)+1
     pred_ids, label_ids = {}, {}
     for vid, (pred_id, label_id) in enumerate(zip(pred_onehot, label_)):
         if(pred_id in pred_ids):
@@ -24,7 +27,7 @@ def  remake_to_labelorder(pred_tensor: torch.tensor, label_: list) -> dict:
             label_ids[label_id] = []
             label_ids[label_id].append(vid)
 
-    pred_pairs, label_pairs = [set() for _ in range(n)], [set() for _ in range(n)]
+    pred_pairs, label_pairs = [set() for _ in range(n_of_clusters)], [set() for _ in range(n_of_clusters)]
     for pred_key, label_key in zip(pred_ids.keys(), label_ids.keys()):
         pred_pairs[pred_key] |= set([pair for pair in itertools.combinations(pred_ids[pred_key], 2)])
         label_pairs[label_key] |= set([pair for pair in itertools.combinations(label_ids[label_key], 2)])
@@ -32,28 +35,25 @@ def  remake_to_labelorder(pred_tensor: torch.tensor, label_: list) -> dict:
     table = np.array([[len(label_pair&pred_pair) for label_pair in label_pairs] for pred_pair in pred_pairs])
 
     G = nx.DiGraph()
-    G.add_node('s', demand = -n)
-    G.add_node('t', demand = n)
-    for pred_id in range(n):
+    G.add_node('s', demand = -n_of_clusters)
+    G.add_node('t', demand = n_of_clusters)
+    for pred_id in range(n_of_clusters):
         G.add_edge('s', 'p_{}'.format(pred_id), weight=0, capacity=1)
     for source, weights in enumerate(table):
         for target, w in enumerate(weights):
             G.add_edge('p_{}'.format(source), 'l_{}'.format(target), weight=-w, capacity=1)
-    for label_id in range(n):
+    for label_id in range(n_of_clusters):
         G.add_edge('l_{}'.format(label_id), 't', weight=0, capacity=1)
 
     clus_label_map = {}
     result = nx.min_cost_flow(G)
     for i, d in result.items():
         for j, f in d.items():
-            if f and i[0]=='p' and j[0]=='l': 
+            if f and i[0]=='p' and j[0]=='l':
                 clus_label_map[int(i[2])] = int(j[2])
-    for vi, pred_vi in enumerate(pred_tensor):
-        source, target = pred_onehot[vi], clus_label_map[pred_onehot[vi]]
-        buff = pred_vi[source].cpu().detach().item()
-        pred_vi[source] = pred_vi[target]
-        pred_vi[target] = buff
-    return pred_tensor
+    w = torch.FloatTensor([[1 if j==clus_label_map[i] else 0 for j in range(n_of_clusters)] 
+                                        for i in range(n_of_clusters)]).cuda()
+    return torch.mm(pred_tensor, w)
 
 
 #kmeans
