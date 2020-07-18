@@ -2,8 +2,10 @@ from __future__ import division
 from __future__ import print_function
 
 from tqdm import tqdm
+import os
 import math
 import sys
+sys.path.append('D:/python/GCN/DeepGraphClustering/data/utilities')
 import time
 import argparse
 import numpy as np
@@ -15,7 +17,7 @@ import torch.optim as optim
 
 from utilities import load_data, accuracy, nmi, purity, kmeans, remake_to_labelorder
 from models import DGC, GCN
-from layers import FrobeniusNorm, purity_loss
+from layers import FrobeniusNorm, HardClusterLoss
 
 #settingargs check
 parser = argparse.ArgumentParser()
@@ -26,6 +28,8 @@ parser.add_argument('--fastmode', action='store_true', default=False,
 parser.add_argument('--seed', type=int, default=1000, help='Random seed.')
 parser.add_argument('--epochs', type=int, default=200,
                                 help='Number of epochs to train.')
+parser.add_argument('--skips', type=int, default=1,
+                                help='Number of epochs per feed preudo labels.')
 parser.add_argument('--lr', type=float, default=0.01,
                                 help='Initial learning rate.')
 parser.add_argument('--weight_decay', type=float, default=5e-4,
@@ -37,7 +41,8 @@ parser.add_argument('--dropout', type=float, default=0.5,
 
 args = parser.parse_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
-
+tracedir = 'epochs{}_skips{}_l2norm'.format(args.epochs, args.skips)
+os.makedirs('./data/experiment/' + tracedir)
 np.random.seed(args.seed)
 torch.manual_seed(args.seed)
 if args.cuda:
@@ -45,60 +50,62 @@ if args.cuda:
 
 # Load data
 adj, features, labels, idx_train = load_data()
-nmi_best, Zn_best, pseudo_label = 0., None, None
-labels_sclump = np.loadtxt('D:/python/GCN/DeepGraphClustering/data/experiment/SClump_label.csv')
-labels_sclump = torch.LongTensor(labels_sclump).clone().to('cuda')
-dane_emb = np.loadtxt('./data/experiment/DANEemb.csv')
-dane_emb = torch.FloatTensor(dane_emb).cuda()
-
+pseudo_label = None
 # Model and optimizer
 base_model = GCN(nfeat=features.shape[1], nhid=args.hidden['gc']).cuda()
 base_model.load_state_dict(torch.load('model_gcn'))
 model = DGC(base=base_model, nfeat=features.shape[1], nhid=args.hidden,
                     nclass=labels.max().item()+1, dropout=args.dropout)
 loss_fro = FrobeniusNorm()
+loss_hardcluster = HardClusterLoss()
 optimizer = optim.Adam(model.parameters(),
                        lr=args.lr, weight_decay=args.weight_decay) #lrが学習係数
-
-if args.cuda: #cpuかgpuどちらのtensorを使うかの処理
+if args.cuda: #enable or disable cuda(GPU)
     model.cuda()
     features = features.cuda()
     adj = adj.cuda()
     labels = labels.cuda()
     idx_train = idx_train.cuda()
 
+#train function
 def train(epoch, log):
     global pseudo_label, nmi_best, Zn_best
     t = time.time()
     model.train()
     optimizer.zero_grad()
     [output1, output2], Zn = model(features, adj)
-    if(epoch%50 == 0):
+    if(epoch%args.skips == 0):
         pseudo_label = kmeans(Zn, torch.max(labels)+1)
-    output1_ = remake_to_labelorder(output1, pseudo_label)
-    loss_train1 = F.nll_loss(output1_[idx_train], pseudo_label[idx_train]) #クロスエントロピー
-    loss_train2 = loss_fro(output2[idx_train], features[idx_train]) #自作損失関数
+    output1_mapped = remake_to_labelorder(output1, pseudo_label)
+    loss_train1 = F.nll_loss(output1_mapped[idx_train], pseudo_label[idx_train]) #クロスエントロピー
+    loss_train1 += loss_hardcluster(output1_mapped)
+    loss_train2 = loss_fro(output2[idx_train], features[idx_train])
     loss_train1.backward(retain_graph=True) #更にbackwardならretain_graph = Trueにすること
     loss_train2.backward()
     optimizer.step()
-    nmi_train, pur_train = nmi(output1_[idx_train], labels[idx_train]), purity(output1[idx_train], labels[idx_train])
+    nmi_train, pur_train = nmi(output1[idx_train], labels[idx_train]), purity(output1[idx_train], labels[idx_train])
+
+    #loging every time
     log['loss_train1'].append(loss_train1.cuda().cpu().detach().item())
     log['loss_train2'].append(loss_train2.cuda().cpu().detach().item())
     log['nmi_train'].append(nmi_train)
     log['pur_train'].append(pur_train)
-    if(nmi_best < nmi_train):
-        nmi_best = nmi_train
-        Zn_best = Zn
+    pseudo_label_ = pseudo_label.cuda().cpu().detach().numpy().copy()
+    output1_ = output1.cuda().cpu().detach().numpy().copy()
+    output1_mapped_ = output1_mapped.cuda().cpu().detach().numpy().copy()
+    np.savetxt('./data/experiment/' + tracedir + '/Zn_epoch#{}.csv'.format(epoch), Zn)
+    np.savetxt('./data/experiment/' + tracedir + '/pseudolabel_epoch#{}.csv'.format(epoch), pseudo_label_, fmt='%d')
+    np.savetxt('./data/experiment/' + tracedir + '/predlabel_epoch#{}.csv'.format(epoch), output1_)
+    np.savetxt('./data/experiment/' + tracedir + '/predlabel_mapped_epoch#{}.csv'.format(epoch), output1_mapped_)
 
 
 def test(log):
-    model.eval() #evalモードだとdropoutが機能しなくなる，trainモードはもちろん機能する
+    model.eval() #evalモードだとdropoutが機能しなくなる，trainモード時は機能する
     [output1, output2], Zn = model(features, adj)
     nmi_test, pur_test = nmi(output1[idx_train], labels[idx_train]), purity(output1[idx_train], labels[idx_train])
     log['nmi_test'], log['pur_test'] = nmi_test, pur_test
 
-
-# Train model
+# Train
 t_total = time.time()
 log = {'loss_train1':[], 'loss_train2':[], 'nmi_train':[], 'pur_train':[], 
            'nmi_test':0, 'pur_test':0}
@@ -107,21 +114,21 @@ for epoch in tqdm(range(args.epochs)):
     train(epoch, log)
 print("-----------------Optimization Finished!-----------------")
 print("Total time elapsed: {:.4f}s\n".format(time.time() - t_total))
-np.savetxt('data/experiment/BestZn_kmeans50+pretrain_.csv', Zn_best)
 
-# Testing
+# Test
 test(log)
 
+
 #log + plot
-for epoch in range(args.epochs)[::10]:
-    print('Epoch:{:04d}'.format(epoch),
-          'lss1_train: {:.4f}'.format(log['loss_train1'][epoch]),
-          'lss2_train: {:.4f}'.format(log['loss_train2'][epoch]),
-          'nmi_train: {:.4f}'.format(log['nmi_train'][epoch]),
-          'pur_train: {:.4f}'.format(log['pur_train'][epoch]))
-print("#################\nTest set results:", "nmi= {:.4f}".format(log['nmi_test']))
+with open('./data/experiment/' + tracedir + '/result.csv', 'w') as w:
+    w.write('Epoch lss1_train lss2_train nmi_train pur_train\n')
+    for epoch in range(args.epochs):
+        w.write('{} {:.4f} {:.4f} {:.4f} {:.4f}\n'.format(epoch, log['loss_train1'][epoch], \
+                    log['loss_train2'][epoch], log['nmi_train'][epoch], log['pur_train'][epoch]))
+
 fig = plt.figure(figsize=(35, 35))
-ax1, ax2, ax3, ax4 = fig.add_subplot(2, 2, 1), fig.add_subplot(2, 2, 2),                     fig.add_subplot(2, 2, 3), fig.add_subplot(2, 2, 4)
+ax1, ax2, ax3, ax4 = fig.add_subplot(2, 2, 1), fig.add_subplot(2, 2, 2), \
+                               fig.add_subplot(2, 2, 3), fig.add_subplot(2, 2, 4)
 ax1.plot(log['loss_train1'], label='loss_train1')
 ax1.legend(loc='upper right', prop={'size': 25})
 ax1.tick_params(axis='x', labelsize='23')
@@ -142,4 +149,4 @@ ax4.legend(loc='lower right', prop={'size': 25})
 ax4.tick_params(axis='x', labelsize='23')
 ax4.tick_params(axis='y', labelsize='23')
 ax4.set_ylim(min(log['pur_train']), math.ceil(10*max(log['pur_train']))/10)
-plt.savefig('data/experiment/log_kmeans50+pretrain.png')
+plt.savefig('./data/experiment/' + tracedir + './result.png')
