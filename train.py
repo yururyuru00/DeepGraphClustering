@@ -15,20 +15,20 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 
-from utilities import load_data, accuracy, nmi, purity, kmeans, remake_to_labelorder
+from utilities import *
 from models import DGC, GCN
 from layers import FrobeniusNorm, HardClusterLoss
 
 #settingargs check
 parser = argparse.ArgumentParser()
-parser.add_argument('--no-cuda', action='store_true', default=False,
+parser.add_argument('--no_cuda', action='store_true', default=False,
                                 help='Disables CUDA training.')
 parser.add_argument('--fastmode', action='store_true', default=False,
                                 help='Validate during training pass.')
 parser.add_argument('--seed', type=int, default=1000, help='Random seed.')
 parser.add_argument('--epochs', type=int, default=200,
                                 help='Number of epochs to train.')
-parser.add_argument('--skips', type=int, default=1,
+parser.add_argument('--skips', type=int, default=50,
                                 help='Number of epochs per feed preudo labels.')
 parser.add_argument('--lr', type=float, default=0.01,
                                 help='Initial learning rate.')
@@ -38,10 +38,12 @@ parser.add_argument('--hidden', type=dict, default={'gc':[512,200],
                                 'affc':[64,32], 'affr':[128,64]},  help='Number of hidden units.')
 parser.add_argument('--dropout', type=float, default=0.5,
                                 help='Dropout rate (1 - keep probability).')
+parser.add_argument('--save', type=str, default='test',
+                                help='filename when save log')                        
 
 args = parser.parse_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
-tracedir = 'epochs{}_skips{}_l2norm'.format(args.epochs, args.skips)
+tracedir = '{}_epoch{}_skip{}'.format(args.save, args.epochs, args.skips)
 os.makedirs('./data/experiment/' + tracedir)
 np.random.seed(args.seed)
 torch.manual_seed(args.seed)
@@ -49,11 +51,11 @@ if args.cuda:
     torch.cuda.manual_seed(args.seed)
 
 # Load data
-adj, features, labels, idx_train = load_data()
+adj, features, labels, _ = load_data()
 pseudo_label = None
 # Model and optimizer
 base_model = GCN(nfeat=features.shape[1], nhid=args.hidden['gc']).cuda()
-base_model.load_state_dict(torch.load('model_gcn'))
+base_model.load_state_dict(torch.load('model_gcn_mini'))
 model = DGC(base=base_model, nfeat=features.shape[1], nhid=args.hidden,
                     nclass=labels.max().item()+1, dropout=args.dropout)
 loss_fro = FrobeniusNorm()
@@ -65,7 +67,6 @@ if args.cuda: #enable or disable cuda(GPU)
     features = features.cuda()
     adj = adj.cuda()
     labels = labels.cuda()
-    idx_train = idx_train.cuda()
 
 #train function
 def train(epoch, log):
@@ -75,34 +76,35 @@ def train(epoch, log):
     optimizer.zero_grad()
     [output1, output2], Zn = model(features, adj)
     if(epoch%args.skips == 0):
-        pseudo_label = kmeans(Zn, torch.max(labels)+1)
+        m_setting = 1.1 + 0.1*(float(epoch)/float(args.epochs))
+        pseudo_label = fuzzy_cmeans(Zn, torch.max(labels)+1, m=m_setting)
     output1_mapped = remake_to_labelorder(output1, pseudo_label)
-    loss_train1 = F.nll_loss(output1_mapped[idx_train], pseudo_label[idx_train]) #クロスエントロピー
-    loss_train1 += loss_hardcluster(output1_mapped)
-    loss_train2 = loss_fro(output2[idx_train], features[idx_train])
+    loss_train1 = loss_fro(output1_mapped, pseudo_label) #クロスエントロピー
+    #loss_train1 += loss_hardcluster(output1_mapped)
+    loss_train2 = loss_fro(output2, features)
     loss_train1.backward(retain_graph=True) #更にbackwardならretain_graph = Trueにすること
     loss_train2.backward()
     optimizer.step()
-    nmi_train, pur_train = nmi(output1[idx_train], labels[idx_train]), purity(output1[idx_train], labels[idx_train])
+    nmi_train, pur_train = nmi(output1, labels), purity(output1, labels)
 
     #loging every time
-    log['loss_train1'].append(loss_train1.cuda().cpu().detach().item())
-    log['loss_train2'].append(loss_train2.cuda().cpu().detach().item())
+    log['loss_train1'].append(loss_train1.item())
+    log['loss_train2'].append(loss_train2.item())
     log['nmi_train'].append(nmi_train)
     log['pur_train'].append(pur_train)
     pseudo_label_ = pseudo_label.cuda().cpu().detach().numpy().copy()
     output1_ = output1.cuda().cpu().detach().numpy().copy()
     output1_mapped_ = output1_mapped.cuda().cpu().detach().numpy().copy()
-    np.savetxt('./data/experiment/' + tracedir + '/Zn_epoch#{}.csv'.format(epoch), Zn)
-    np.savetxt('./data/experiment/' + tracedir + '/pseudolabel_epoch#{}.csv'.format(epoch), pseudo_label_, fmt='%d')
-    np.savetxt('./data/experiment/' + tracedir + '/predlabel_epoch#{}.csv'.format(epoch), output1_)
-    np.savetxt('./data/experiment/' + tracedir + '/predlabel_mapped_epoch#{}.csv'.format(epoch), output1_mapped_)
+    np.save('./data/experiment/' + tracedir + '/Zn_epoch#{}'.format(epoch), Zn)
+    np.save('./data/experiment/' + tracedir + '/pseudolabel_epoch#{}'.format(epoch), pseudo_label_)
+    np.save('./data/experiment/' + tracedir + '/predlabel_epoch#{}'.format(epoch), output1_)
+    np.save('./data/experiment/' + tracedir + '/predlabel_mapped_epoch#{}'.format(epoch), output1_mapped_)
 
 
 def test(log):
     model.eval() #evalモードだとdropoutが機能しなくなる，trainモード時は機能する
     [output1, output2], Zn = model(features, adj)
-    nmi_test, pur_test = nmi(output1[idx_train], labels[idx_train]), purity(output1[idx_train], labels[idx_train])
+    nmi_test, pur_test = nmi(output1, labels), purity(output1, labels)
     log['nmi_test'], log['pur_test'] = nmi_test, pur_test
 
 # Train
