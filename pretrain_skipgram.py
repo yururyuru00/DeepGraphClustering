@@ -1,6 +1,6 @@
 import torch
 import argparse
-from torch_geometric.datasets import KarateClub
+from torch_geometric.datasets import Planetoid
 from utilities import ExtractSubstructureContextPair
 from models import GCN
 import torch.optim as optim
@@ -15,8 +15,24 @@ def train(args, model_substruct, model_context, data, optimizer_substruct, optim
         data.center_substruct_idx]
     context_rep = model_context(data.x_context, data.edge_index_context)[
         data.overlap_context_substruct_idx]
+    negative_rep = model_substruct(data.x_substruct, data.edge_index_substruct)[
+        data.center_negative_idx].reshape(1, -1)
 
-    print(substruct_rep.size(), context_rep.size())
+    # skig gram with negative sampling
+    pred_pos = torch.sum(substruct_rep*context_rep, dim=1)
+    pred_neg = torch.sum(substruct_rep*negative_rep, dim=1)
+
+    criterion = torch.nn.BCEWithLogitsLoss()
+    loss_pos = criterion(pred_pos.double(), torch.ones(
+        len(pred_pos)).to(pred_pos.device).double())
+    loss_neg = criterion(pred_neg.double(), torch.zeros(
+        len(pred_neg)).to(pred_neg.device).double())
+
+    optimizer_substruct.zero_grad()
+    optimizer_context.zero_grad()
+    loss = loss_pos + loss_neg
+    loss.backward()
+
     return 0
 
 
@@ -42,9 +58,10 @@ args = parser.parse_args()
 
 # load and transform dataset
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-dataset = KarateClub(transform=ExtractSubstructureContextPair(args.border))
+dataset = Planetoid(root='./data/experiment/', name='Cora',
+                    transform=ExtractSubstructureContextPair(args.border))
 data = dataset[0]
-print(data)
+print(data, end='\n\n')
 
 # set up GCN model
 n_attributes = len(data.x[0])
