@@ -17,7 +17,7 @@ import math
 import sys
 sys.path.append('D:/python/GCN/DeepGraphClustering/data/utilities')
 
-# setting args check
+# setting arg check
 parser = argparse.ArgumentParser()
 parser.add_argument('--no_cuda', action='store_true', default=False,
                     help='Disables CUDA training.')
