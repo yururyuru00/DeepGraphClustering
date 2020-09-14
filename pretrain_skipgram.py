@@ -1,7 +1,8 @@
-import torch
 import argparse
+from tqdm import tqdm
 import matplotlib.pyplot as plt
-from torch_geometric.datasets import KarateClub
+import torch
+from torch_geometric.datasets import Planetoid
 from utilities import ExtractSubstructureContextPair
 from models import GCN
 import torch.optim as optim
@@ -29,41 +30,41 @@ def train(args, model_substruct, model_context, data, optimizer_substruct, optim
     loss_neg = criterion(pred_neg.double(), torch.zeros(
         len(pred_neg)).to(pred_neg.device).double())
 
-    '''optimizer_substruct.zero_grad()
-    optimizer_context.zero_grad()'''
+    optimizer_substruct.zero_grad()
+    optimizer_context.zero_grad()
     loss = loss_pos + loss_neg
     loss.backward()
+    optimizer_substruct.step()
+    optimizer_context.step()
 
-    loss_ = float(loss_pos.detach().cpu().item() +
-                  loss_neg.detach().cpu().item())
-    return loss_
+    return float(loss.detach().cpu().item())
 
 
 parser = argparse.ArgumentParser(
     description='PyTorch implementation of pre-training of GNN')
 parser.add_argument('--lr', type=float, default=0.001,
                     help='learning rate (default: 0.001)')
-parser.add_argument('--decay', type=float, default=0,
-                    help='weight decay (default: 0)')
+parser.add_argument('--decay', type=float, default=5e-4,
+                    help='weight decay (default: 5e-4)')
 parser.add_argument('--epochs', type=int, default=100,
                     help='number of epochs to train (defalt: 100)')
 parser.add_argument('--border', type=int, default=1,
                     help='boderline between substract and context graph (default: 3).')
-parser.add_argument('--w_substract', type=int, default=3,
+parser.add_argument('--w_substract', type=int, default=5,
                     help='width of substruct graph (default: 5).')
-parser.add_argument('--w_context', type=int, default=2,
+parser.add_argument('--w_context', type=int, default=3,
                     help='width of context graph (default: 3).')
-parser.add_argument('--hidden1', type=list, default=[32, 16, 8],
+parser.add_argument('--hidden1', type=list, default=[1024, 768, 512, 384, 256],
                     help='number of hidden layer of GCN for substract representation')
-parser.add_argument('--hidden2', type=list, default=[16, 8],
+parser.add_argument('--hidden2', type=list, default=[1024, 512, 256],
                     help='number of hidden layer of GCN for context representation')
 args = parser.parse_args()
 
 # load and transform dataset
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-dataset = KarateClub(transform=ExtractSubstructureContextPair(args.border))
+dataset = Planetoid(root='./data/experiment/', name='Cora',
+                    transform=ExtractSubstructureContextPair(args.border))
 data = dataset[0]
-print(data, end='\n\n')
 
 # set up GCN model
 n_attributes = len(data.x[0])
@@ -78,16 +79,16 @@ optimizer_context = optim.Adam(
 
 # train
 log = []
-for epoch in range(args.epochs):
-    print("====epoch " + str(epoch), end=': ')
-    loss = train(args, model_substruct, model_context, dataset[0].to(device),
+for epoch in tqdm(range(args.epochs)):
+    loss = train(args, model_substruct, model_context, data.to(device),
                  optimizer_substruct, optimizer_context, device)
     log.append(loss)
-torch.save(model_substruct.state_dict(), 'model_gcn')
 
-fig = plt.figure(figsize=(35, 35))
+
+# logging
+fig = plt.figure(figsize=(17, 17))
 plt.plot(log, label='cross entropy loss')
-plt.legend(loc='upper right', prop={'size': 25})
-plt.tick_params(axis='x', labelsize='23')
-plt.tick_params(axis='y', labelsize='23')
+plt.legend(loc='upper right', prop={'size': 12})
+plt.tick_params(axis='x', labelsize='12')
+plt.tick_params(axis='y', labelsize='12')
 plt.show()

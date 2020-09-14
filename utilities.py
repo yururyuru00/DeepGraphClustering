@@ -20,9 +20,8 @@ class ExtractSubstructureContextPair:
         G = graph_data_obj_to_nx(data)
 
         # select center_node of substruct graph based on Pagerank
-        '''nodes_rank = nx.pagerank_scipy(G, alpha=0.85)
-        center_node_idx = max((v, k) for k, v in nodes_rank.items())[1]'''
-        center_node_idx = random.choice(range(num_nodes))
+        nodes_rank = nx.pagerank_scipy(G, alpha=0.85)
+        center_node_idx = max((v, k) for k, v in nodes_rank.items())[1]
         data.x_substruct = data.x
         data.edge_index_substruct = data.edge_index
         data.center_substruct_idx = center_node_idx
@@ -32,7 +31,6 @@ class ExtractSubstructureContextPair:
             nx.pagerank_numpy(G, personalization={center_node_idx: 1})
         data.center_negative_idx = min(
             (v, k) for k, v in nodes_rank_from_center.items())[1]
-        print('({} {}) '.format(center_node_idx, data.center_negative_idx))
 
         # Get context that is between l1 and the max diameter of the PPI graph
         l1_node_idxes = nx.single_source_shortest_path_length(G, center_node_idx,

@@ -1,6 +1,6 @@
 import torch
 import argparse
-from torch_geometric.datasets import KarateClub
+from torch_geometric.datasets import Planetoid
 from utilities import ExtractSubstructureContextPair
 from models import GCN
 import torch.optim as optim
@@ -24,7 +24,7 @@ args = parser.parse_args()
 
 # load and transform dataset
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-dataset = KarateClub(transform=None)
+dataset = Planetoid(root='./data/experiment/', name='Cora')
 data = dataset[0]
 print(data, end='\n\n')
 
