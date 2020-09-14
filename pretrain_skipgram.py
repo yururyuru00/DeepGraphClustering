@@ -83,7 +83,7 @@ for epoch in tqdm(range(args.epochs)):
     loss = train(args, model_substruct, model_context, data.to(device),
                  optimizer_substruct, optimizer_context, device)
     log.append(loss)
-
+torch.save(model_substruct.state_dict(), 'pretrained_gcn')
 
 # logging
 fig = plt.figure(figsize=(17, 17))
