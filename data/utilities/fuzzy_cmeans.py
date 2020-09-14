@@ -28,18 +28,12 @@ if __name__ == "__main__":
     X = np.load(args.data_path)
 
     # fit the fuzzy-c-means
-    '''fcm = FCM(n_clusters=args.n_clusters)
-    fcm.fit(X)
-    label = [np.argmax(label) for label in fcm.u]'''
-    cm_result = cmeans(X.T, args.n_clusters, args.m, 0.001, 10000)
+    cm_result = cmeans(X.T, args.n_clusters, args.m, 0.001, 10000, seed=0)
     soft_cluster = cm_result[1].T
     hard_cluster = [np.argmax(c) for c in soft_cluster]
-    '''k_means = KMeans(args.n_clusters, n_init=10, random_state=0, tol=0.0000001)
-    k_means.fit(X)
-    label = k_means.labels_'''
 
     # make lower dimension by t-sne for visualization
-    X = t_sne(X)
+    X = t_sne(X, dim=2)
 
     # plot result
     fig = plt.figure(figsize=(16,12))

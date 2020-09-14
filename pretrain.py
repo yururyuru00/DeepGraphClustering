@@ -16,7 +16,7 @@ from utilities import load_data, accuracy, nmi, purity, kmeans
 from models import GCN
 from layers import FrobeniusNorm, purity_loss
 
-#settingargs check
+# settingargs check
 parser = argparse.ArgumentParser()
 parser.add_argument('--no-cuda', action='store_true', default=False,
                     help='Disables CUDA training.')
@@ -29,7 +29,7 @@ parser.add_argument('--lr', type=float, default=0.01,
                     help='Initial learning rate.')
 parser.add_argument('--weight_decay', type=float, default=5e-4,
                     help='Weight decay (L2 loss on parameters).')
-parser.add_argument('--hidden', type=list, default=[512,200], 
+parser.add_argument('--hidden', type=list, default=[512, 200],
                     help='Number of hidden units.')
 parser.add_argument('--dropout', type=float, default=0.5,
                     help='Dropout rate (1 - keep probability).')
@@ -43,21 +43,22 @@ if args.cuda:
     torch.cuda.manual_seed(args.seed)
 
 # Load data
-adj, features, _, idx_train = load_data() #pretrainではラベルは使わない
+adj, features, _, idx_train = load_data()  # pretrainではラベルは使わない
 dane_emb = np.loadtxt('./data/experiment/DANEemb.csv')
 
 # Model and optimizer
 model = GCN(nfeat=features.shape[1], nhid=args.hidden)
 loss_f = FrobeniusNorm()
 optimizer = optim.Adam(model.parameters(),
-                       lr=args.lr, weight_decay=args.weight_decay) #lrが学習係数
+                       lr=args.lr, weight_decay=args.weight_decay)  # lrが学習係数
 
-if args.cuda: #cpuかgpuどちらのtensorを使うかの処理
+if args.cuda:  # cpuかgpuどちらのtensorを使うかの処理
     model.cuda()
     features = features.cuda()
     adj = adj.cuda()
     dane_emb = torch.FloatTensor(dane_emb).cuda()
     idx_train = idx_train.cuda()
+
 
 def train(epoch, log):
     t = time.time()
@@ -70,24 +71,27 @@ def train(epoch, log):
 
     log['loss'].append(loss.cuda().cpu().detach().numpy().copy())
 
-#untrained Zn log 
+
+# untrained Zn log
 model.train()
 output = model(features, adj)
-np.savetxt('./data/experiment/Zn_untrainedGCN.csv', output.cuda().cpu().detach().numpy().copy())
+np.savetxt('./data/experiment/Zn_untrainedGCN.csv',
+           output.cuda().cpu().detach().numpy().copy())
 
-# Train and Save model 
+# Train and Save model
 t_total = time.time()
-log = {'loss' : []}
+log = {'loss': []}
 for epoch in range(args.epochs):
     train(epoch, log)
 print("Optimization Finished!")
 print("Total time elapsed: {:.4f}s\n".format(time.time() - t_total))
 torch.save(model.state_dict(), 'model_gcn')
 
-#trained Zn log
+# trained Zn log
 model.train()
 output = model(features, adj)
-np.savetxt('./data/experiment/Zn_trainedGCN.csv', output.cuda().cpu().detach().numpy().copy())
+np.savetxt('./data/experiment/Zn_trainedGCN.csv',
+           output.cuda().cpu().detach().numpy().copy())
 
 #log + plot
 for epoch in range(args.epochs)[::10]:
