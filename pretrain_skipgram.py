@@ -8,7 +8,7 @@ from models import GCN
 import torch.optim as optim
 
 
-def train(args, model_substruct, model_context, data, optimizer_substruct, optimizer_context, device):
+def train(model_substruct, model_context, data, optimizer_substruct, optimizer_context):
     model_substruct.train()
     model_context.train()
 
@@ -67,7 +67,7 @@ dataset = Planetoid(root='./data/experiment/', name='Cora',
 data = dataset[0]
 
 # set up GCN model
-n_attributes = len(data.x[0])
+n_attributes = data.x.shape[1]
 model_substruct = GCN(args.w_substract, n_attributes, args.hidden1).to(device)
 model_context = GCN(args.w_context, n_attributes, args.hidden2).to(device)
 
@@ -80,12 +80,12 @@ optimizer_context = optim.Adam(
 # train
 log = []
 for epoch in tqdm(range(args.epochs)):
-    loss = train(args, model_substruct, model_context, data.to(device),
-                 optimizer_substruct, optimizer_context, device)
+    loss = train(model_substruct, model_context, data.to(device),
+                 optimizer_substruct, optimizer_context)
     log.append(loss)
 torch.save(model_substruct.state_dict(), 'pretrained_gcn')
 
-# logging
+# log
 fig = plt.figure(figsize=(17, 17))
 plt.plot(log, label='cross entropy loss')
 plt.legend(loc='upper right', prop={'size': 12})

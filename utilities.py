@@ -127,12 +127,11 @@ data_path = 'D:\python\GCN\DeepGraphClustering\data'
 
 def remake_to_labelorder(pred_tensor: torch.tensor, label_tensor: torch.tensor) -> dict:
     pred_ = pred_tensor.cuda().cpu().detach().numpy().copy()
+    pred_ = np.array([np.argmax(i) for i in pred_])
     label_ = label_tensor.cuda().cpu().detach().numpy().copy()
-    pred_onehot = np.array([np.argmax(i) for i in pred_])
-    label_onehot = np.array([np.argmax(i) for i in label_])
-    n_of_clusters = max(label_onehot)+1
+    n_of_clusters = max(label_)+1
     pred_ids, label_ids = {}, {}
-    for vid, (pred_id, label_id) in enumerate(zip(pred_onehot, label_onehot)):
+    for vid, (pred_id, label_id) in enumerate(zip(pred_, label_)):
         if(pred_id in pred_ids):
             pred_ids[pred_id].append(vid)
         else:

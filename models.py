@@ -1,50 +1,55 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from layers import GraphConvolution
 from torch_geometric.nn import GCNConv
 
 
 class DGC(nn.Module):
-    def __init__(self, base, nfeat, nhid, nclass, dropout):
+    def __init__(self, base, n_feat, n_hid, n_class, dropout):
         super(DGC, self).__init__()
 
-        self.gc1 = base.gc1
-        self.gc2 = base.gc2
+        # add GClayer based on pretrained GCN
+        self.gc_layers = torch.nn.ModuleList()
+        for layer in base.gc_layers:
+            self.gc_layers.append(layer)
 
-        self.affc1 = nn.Linear(nhid['gc'][1], nhid['affc'][0])
-        self.bn1 = nn.BatchNorm1d(nhid['affc'][0])
-        self.affc2 = nn.Linear(nhid['affc'][0], nhid['affc'][1])
-        self.bn2 = nn.BatchNorm1d(nhid['affc'][1])
-        self.affc3 = nn.Linear(nhid['affc'][1], nclass)
+        # add clustering layer
+        self.clus1 = nn.Linear(n_hid['gc'][-1], n_hid['clustering'][0])
+        self.bn1 = nn.BatchNorm1d(n_hid['clustering'][0])
+        self.clus2 = nn.Linear(n_hid['clustering'][0], n_hid['clustering'][1])
+        self.bn2 = nn.BatchNorm1d(n_hid['clustering'][1])
+        self.clus3 = nn.Linear(n_hid['clustering'][1], n_class)
         self.softmax = nn.Softmax(dim=1)
 
-        self.affr1 = nn.Linear(nhid['gc'][1], nhid['affr'][0])
-        self.affr2 = nn.Linear(nhid['affr'][0], nhid['affr'][1])
-        self.affr3 = nn.Linear(nhid['affr'][1], nfeat)
+        # add reconstruct layer
+        self.rec1 = nn.Linear(n_hid['gc'][-1], n_hid['reconstruct'][0])
+        self.rec2 = nn.Linear(n_hid['reconstruct'][0], n_hid['reconstruct'][1])
+        self.rec3 = nn.Linear(n_hid['reconstruct'][1], n_feat)
         self.dropout = dropout
 
-    def forward(self, x, adj):  # x:feature, adj:adjency matrix
-        x1 = torch.tanh(self.gc1(x, adj))
-        #x1 = F.dropout(x1, self.dropout, training=self.training)
-        x2 = torch.tanh(self.gc2(x1, adj))
-        #x2 = F.dropout(x2, self.dropout, training=self.training)
-        Zn = x2.cuda().cpu().detach().numpy().copy()
+    def forward(self, x, edge_index):
+        # Graph Convolution
+        n_layer_gc = len(self.gc_layers)
+        for layer in range(n_layer_gc):
+            x = self.gc_layers[layer](x, edge_index)
+            x = torch.tanh(x)
+        Zn = x.cuda().cpu().detach().numpy().copy()
 
-        # Clustering MLP + BatchNormalization
-        xc3 = F.relu(self.bn1(self.affc1(x2)))
-        xc4 = F.relu(self.bn2(self.affc2(xc3)))
-        xc5 = self.affc3(xc4)
-        xc5 = self.softmax(xc5)
+        # Clustering MLP
+        x_c = F.relu(self.bn1(self.clus1(x)))
+        x_c = F.relu(self.bn2(self.clus2(x_c)))
+        x_c = self.clus3(x_c)
+        x_c = self.softmax(x_c)
+
         # Reconstruct MLP
-        xr3 = F.relu(self.affr1(x2))
-        xr3 = F.dropout(xr3, self.dropout, training=self.training)
-        xr4 = F.relu(self.affr2(xr3))
-        xr4 = F.dropout(xr4, self.dropout, training=self.training)
-        xr5 = self.affr3(xr4)
-        xr5 = F.dropout(xr5, self.dropout, training=self.training)
+        x_r = F.relu(self.rec1(x))
+        x_r = F.dropout(x_r, self.dropout, training=self.training)
+        x_r = F.relu(self.rec2(x_r))
+        x_r = F.dropout(x_r, self.dropout, training=self.training)
+        x_r = self.rec3(x_r)
+        x_r = F.dropout(x_r, self.dropout, training=self.training)
 
-        return [xc5, xr5], Zn
+        return [x_c, x_r], Zn
 
 
 class GCN(nn.Module):

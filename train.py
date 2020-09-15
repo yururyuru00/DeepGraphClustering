@@ -1,25 +1,53 @@
+import matplotlib.pyplot as plt
 import torch
 import argparse
 from torch_geometric.datasets import Planetoid
-from utilities import ExtractSubstructureContextPair
-from models import GCN
+import torch.nn.functional as F
+from utilities import remake_to_labelorder, kmeans, nmi, purity
+from layers import FrobeniusNorm
+from models import DGC, GCN
 import torch.optim as optim
 
 
-def train(args, model_substruct, model_context, data, optimizer_substruct, optimizer_context, device):
-    pass
+loss_frobenius = FrobeniusNorm()
+
+
+def train(model_dgc, data, optimizer, log):
+    model_dgc.train()
+    optimizer.zero_grad()
+    [clus_labels, reconstructed_x], Zn = model_dgc(data.x, data.edge_index)
+
+    n_class = torch.max(data.y)+1
+    pseudo_label = kmeans(Zn, n_class)
+    clus_labels_mapped = remake_to_labelorder(clus_labels, pseudo_label)
+    loss_clustering = F.nll_loss(
+        clus_labels_mapped, pseudo_label)
+    loss_reconstruct = loss_frobenius(reconstructed_x, data.x)
+
+    loss = loss_clustering + loss_reconstruct
+    loss.backward()
+    optimizer.step()
+
+    nmi_train = nmi(clus_labels, data.y)
+    pur_train = purity(clus_labels, data.y)
+
+    # loging every time
+    log['loss_clustering'].append(loss_clustering.item())
+    log['loss_reconstruct'].append(loss_reconstruct.item())
+    log['nmi'].append(nmi_train)
+    log['pur'].append(pur_train)
 
 
 parser = argparse.ArgumentParser(
     description='PyTorch implementation of pre-training of GNN')
 parser.add_argument('--lr', type=float, default=0.001,
                     help='learning rate (default: 0.001)')
-parser.add_argument('--decay', type=float, default=5e-4,
+parser.add_argument('--weight_decay', type=float, default=5e-4,
                     help='weight decay (default: 5e-4)')
+parser.add_argument('--dropout', type=float, default=0.5,
+                    help='Dropout rate (1 - keep probability).')
 parser.add_argument('--epochs', type=int, default=100,
                     help='number of epochs to train (defalt: 100)')
-parser.add_argument('--hidden', type=list, default=[1024, 768, 512, 384, 256],
-                    help='number of hidden layer of GCN for substract representation')
 args = parser.parse_args()
 
 # load and transform dataset
@@ -28,20 +56,32 @@ dataset = Planetoid(root='./data/experiment/', name='Cora')
 data = dataset[0]
 print(data, end='\n\n')
 
-# set up GCN model
-n_attributes = len(data.x[0])
-model_substruct = GCN(args.w_substract, n_attributes, args.hidden1).to(device)
-model_context = GCN(args.w_context, n_attributes, args.hidden2).to(device)
+# set up DGC model
+n_attributes = data.x.shape[1]
+n_class = torch.max(data.y).cuda().cpu().detach().numpy().copy()+1
+hidden = {'gc': [1024, 768, 512, 384, 256],
+          'clustering': [64, 32], 'reconstruct': [128, 64]}
+base_model = GCN(n_layer=5, n_feat=n_attributes, hid=hidden['gc']).to(device)
+base_model.load_state_dict(torch.load('./pretrained_gcn'))
+model_dgc = DGC(base=base_model, n_feat=n_attributes, n_hid=hidden,
+                n_class=n_class, dropout=args.dropout).to(device)
 
-# set up optimizer for the two GNNs
-optimizer_substruct = optim.Adam(
-    model_substruct.parameters(), lr=args.lr, weight_decay=args.decay)
-optimizer_context = optim.Adam(
-    model_context.parameters(), lr=args.lr, weight_decay=args.decay)
+# set up optimizer
+optimizer = optim.Adam(model_dgc.parameters(),
+                       lr=args.lr, weight_decay=args.weight_decay)
 
 # train
+log = {'loss_clustering': [], 'loss_reconstruct': [], 'nmi': [], 'pur': []}
 for epoch in range(args.epochs):
     print("====epoch " + str(epoch))
 
-    train(args, model_substruct, model_context, data.to(device),
-          optimizer_substruct, optimizer_context, device)
+    train(model_dgc, data.to(device), optimizer, log)
+
+
+# log
+fig = plt.figure(figsize=(17, 17))
+plt.plot(log['nmi'], label='loss clustering')
+plt.legend(loc='upper right', prop={'size': 12})
+plt.tick_params(axis='x', labelsize='12')
+plt.tick_params(axis='y', labelsize='12')
+plt.show()
