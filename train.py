@@ -1,7 +1,8 @@
+from tqdm import tqdm
 import matplotlib.pyplot as plt
 import torch
 import argparse
-from torch_geometric.datasets import Planetoid
+from torch_geometric.datasets import KarateClub
 import torch.nn.functional as F
 from utilities import remake_to_labelorder, kmeans, nmi, purity
 from layers import FrobeniusNorm
@@ -52,7 +53,7 @@ args = parser.parse_args()
 
 # load and transform dataset
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-dataset = Planetoid(root='./data/experiment/', name='Cora')
+dataset = KarateClub(transform=None)
 data = dataset[0]
 print(data, end='\n\n')
 
@@ -72,15 +73,13 @@ optimizer = optim.Adam(model_dgc.parameters(),
 
 # train
 log = {'loss_clustering': [], 'loss_reconstruct': [], 'nmi': [], 'pur': []}
-for epoch in range(args.epochs):
-    print("====epoch " + str(epoch))
-
+for epoch in tqdm(range(args.epochs)):
     train(model_dgc, data.to(device), optimizer, log)
 
 
 # log
 fig = plt.figure(figsize=(17, 17))
-plt.plot(log['nmi'], label='loss clustering')
+plt.plot(log['loss_clustering'], label='loss clustering')
 plt.legend(loc='upper right', prop={'size': 12})
 plt.tick_params(axis='x', labelsize='12')
 plt.tick_params(axis='y', labelsize='12')

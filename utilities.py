@@ -20,8 +20,9 @@ class ExtractSubstructureContextPair:
         G = graph_data_obj_to_nx(data)
 
         # select center_node of substruct graph based on Pagerank
-        nodes_rank = nx.pagerank_scipy(G, alpha=0.85)
-        center_node_idx = max((v, k) for k, v in nodes_rank.items())[1]
+        '''nodes_rank = nx.pagerank_scipy(G, alpha=0.85)
+        center_node_idx = max((v, k) for k, v in nodes_rank.items())[1]'''
+        center_node_idx = random.choice(range(num_nodes))
         data.x_substruct = data.x
         data.edge_index_substruct = data.edge_index
         data.center_substruct_idx = center_node_idx

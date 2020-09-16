@@ -1,24 +1,33 @@
 import argparse
 from tqdm import tqdm
+import numpy as np
 import matplotlib.pyplot as plt
 import torch
-from torch_geometric.datasets import Planetoid
-from utilities import ExtractSubstructureContextPair
-from models import GCN
+from torch_geometric.datasets import KarateClub
 import torch.optim as optim
 
+from utilities import ExtractSubstructureContextPair
+from models import GCN
+from debug import plot_Zn
 
-def train(model_substruct, model_context, data, optimizer_substruct, optimizer_context):
+
+def train(epoch, model_substruct, model_context, data, optimizer_substruct, optimizer_context):
     model_substruct.train()
     model_context.train()
 
-    # creating substract and context representations
-    substruct_rep = model_substruct(data.x_substruct, data.edge_index_substruct)[
-        data.center_substruct_idx]
+    # creating substract, context, and negative representations
+    representations = model_substruct(
+        data.x_substruct, data.edge_index_substruct)
+    substruct_rep = representations[data.center_substruct_idx]
     context_rep = model_context(data.x_context, data.edge_index_context)[
         data.overlap_context_substruct_idx]
     negative_rep = model_substruct(data.x_substruct, data.edge_index_substruct)[
         data.center_negative_idx].reshape(1, -1)
+
+    Zn = representations.cuda().cpu().detach().numpy().copy()
+    label = data.y.cuda().cpu().detach().numpy().copy()
+    plot_Zn(
+        Zn, label, path_save='./data/experiment/pretrain_skipgram/Zn_skipgram_epoch{}'.format(epoch))
 
     # skig gram with negative sampling
     pred_pos = torch.sum(substruct_rep*context_rep, dim=1)
@@ -80,7 +89,7 @@ optimizer_context = optim.Adam(
 # train
 log = []
 for epoch in tqdm(range(args.epochs)):
-    loss = train(model_substruct, model_context, data.to(device),
+    loss = train(epoch, model_substruct, model_context, dataset[0].to(device),
                  optimizer_substruct, optimizer_context)
     log.append(loss)
 torch.save(model_substruct.state_dict(), 'pretrained_gcn')
@@ -91,4 +100,4 @@ plt.plot(log, label='cross entropy loss')
 plt.legend(loc='upper right', prop={'size': 12})
 plt.tick_params(axis='x', labelsize='12')
 plt.tick_params(axis='y', labelsize='12')
-plt.show()
+plt.savefig('./data/experiment/pretrain_skipgram/loss.png')
