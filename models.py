@@ -33,7 +33,6 @@ class DGC(nn.Module):
         for layer in range(n_layer_gc):
             x = self.gc_layers[layer](x, edge_index)
             x = torch.tanh(x)
-        Zn = x.cuda().cpu().detach().numpy().copy()
 
         # Clustering MLP
         x_c = F.relu(self.bn1(self.clus1(x)))
@@ -49,16 +48,16 @@ class DGC(nn.Module):
         x_r = self.rec3(x_r)
         x_r = F.dropout(x_r, self.dropout, training=self.training)
 
-        return [x_c, x_r], Zn
+        return [x_c, x_r], x
 
 
 class GCN(nn.Module):
-    def __init__(self, n_layer, n_feat, hid):
+    def __init__(self, n_feat, hid):
         super(GCN, self).__init__()
-        self.num_layer = n_layer
+        self.num_layer = len(hid)
 
         self.gc_layers = torch.nn.ModuleList()
-        for layer in range(n_layer):
+        for layer in range(self.num_layer):
             if(layer == 0):
                 self.gc_layers.append(GCNConv(n_feat, hid[0]))
             else:

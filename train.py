@@ -8,6 +8,7 @@ from utilities import remake_to_labelorder, kmeans, nmi, purity
 from layers import FrobeniusNorm
 from models import DGC, GCN
 import torch.optim as optim
+from sklearn.cluster import KMeans
 
 
 loss_frobenius = FrobeniusNorm()
@@ -18,13 +19,19 @@ def train(model_dgc, data, optimizer, log):
     optimizer.zero_grad()
     [clus_labels, reconstructed_x], Zn = model_dgc(data.x, data.edge_index)
 
-    n_class = torch.max(data.y)+1
-    pseudo_label = kmeans(Zn, n_class)
+    # make pseudo labels by using k-means
+    Zn_np = Zn.cuda().cpu().detach().numpy().copy()
+    n_class = torch.max(data.y).cuda().cpu().detach().numpy().copy() + 1
+    k_means = KMeans(n_class, n_init=10, random_state=0, tol=0.0000001)
+    k_means.fit(Zn_np)
+    pseudo_label = torch.LongTensor(k_means.labels_).cuda()
+
+    # map the two labels (predicted labels and pseudo labels) to each other.
     clus_labels_mapped = remake_to_labelorder(clus_labels, pseudo_label)
+
     loss_clustering = F.nll_loss(
         clus_labels_mapped, pseudo_label)
     loss_reconstruct = loss_frobenius(reconstructed_x, data.x)
-
     loss = loss_clustering + loss_reconstruct
     loss.backward()
     optimizer.step()

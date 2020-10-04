@@ -8,63 +8,108 @@ import sklearn.metrics.cluster as clus
 import itertools
 import networkx as nx
 from torch_geometric.data import Data
+from torch_geometric import utils
 from debug import plot_G_contextG_pair
+import random
+import itertools
 
 
-class ExtractSubstructureContextPair:
-    def __init__(self, l1):
-        self.l1 = l1
+class MaskEdge:
+    def __init__(self, mask_rate):
+        self.mask_rate = mask_rate
 
     def __call__(self, data):
+
+        # sample some distinct edges to be masked, based on mask rate
+        A = utils.to_dense_adj(data.edge_index)[0]
+
         num_nodes = data.x.size()[0]
-        G = graph_data_obj_to_nx(data)
+        edge_label_list = []
+        for (i, j) in itertools.combinations(range(num_nodes), 2):
+            if(A[i][j] == 1 or A[j][i] == 1):
+                edge_label_list.append(1)
+                if(random.random() < self.mask_rate):
+                    A[i][j] = 0
+                    A[j][i] = 0
+            else:
+                edge_label_list.append(0)
+        data.edge_index = utils.dense_to_sparse(A)[0]
+        data.edge_label = torch.tensor(edge_label_list, dtype=torch.long)
 
-        # select center_node of substruct graph based on Pagerank
-        '''nodes_rank = nx.pagerank_scipy(G, alpha=0.85)
-        center_node_idx = max((v, k) for k, v in nodes_rank.items())[1]'''
-        center_node_idx = random.choice(range(num_nodes))
-        data.x_substruct = data.x
-        data.edge_index_substruct = data.edge_index
-        data.center_substruct_idx = center_node_idx
+        data.masked_node_idx = torch.tensor(masked_node_indices)
 
-        # select center_node of negative graph based on Personalized Pagerank
-        nodes_rank_from_center = \
-            nx.pagerank_numpy(G, personalization={center_node_idx: 1})
-        data.center_negative_idx = min(
-            (v, k) for k, v in nodes_rank_from_center.items())[1]
+        # create ground truth node features corresponding to the masked node
+        mask_node_labels_list = []
+        for idx in masked_node_indices:
+            mask_node_labels_list.append(data.x[idx].view(1, -1))
+        data.mask_node_label = torch.cat(mask_node_labels_list, dim=0)
 
-        # Get context that is between l1 and the max diameter of the PPI graph
-        l1_node_idxes = nx.single_source_shortest_path_length(G, center_node_idx,
-                                                              self.l1).keys()
-        l2_node_idxes = range(num_nodes)
-        context_node_idxes = set(l1_node_idxes).symmetric_difference(
-            set(l2_node_idxes))
-        if len(context_node_idxes) > 0:
-            context_G = G.subgraph(context_node_idxes)
-            '''plot_G_contextG_pair(G, context_G, center_node_idx,
-                                 data.center_negative_idx)'''
-            context_G, context_node_map = reset_idxes(context_G)
-
-            # need to reset node idx to 0 -> num_nodes - 1
-            context_data = nx_to_graph_data_obj(context_G, 0)   # use a dummy
-            # center node idx
-            data.x_context = context_data.x
-            data.edge_index_context = context_data.edge_index
-
-        # Get indices of overlapping nodes between substruct and context,
-        context_substruct_overlap_idxes = list(context_node_idxes)
-        if len(context_substruct_overlap_idxes) > 0:
-            context_substruct_overlap_idxes_reorder = [context_node_map[old_idx]
-                                                       for old_idx in context_substruct_overlap_idxes]
-            data.overlap_context_substruct_idx = \
-                torch.tensor(context_substruct_overlap_idxes_reorder)
+        # created new masked data x, where some nodes have masked feature
+        num_features = data.x.size()[1]
+        for idx in masked_node_indices:
+            data.x[idx] = torch.tensor(
+                np.zeros(num_features), dtype=torch.float)
 
         return data
 
 
-def nx_to_graph_data_obj(g, center_id, allowable_features_downstream=None,
-                         allowable_features_pretrain=None,
-                         node_id_to_go_labels=None):
+class ExtractSubstructureContextPair:
+    def __init__(self, c, l1, device):
+        self.c = c
+        self.l1 = l1
+        self.device = device
+
+    def __call__(self, data):
+        print('transformer called')
+        G = graph_data_obj_to_nx(data)
+
+        # make data and graph object for each i-th cluster (c_i)
+        '''data_np = data.x.cuda().cpu().detach().numpy().copy()
+        k_means = KMeans(self.c, n_init=10, random_state=0, tol=0.0000001)
+        k_means.fit(data_np)
+        cluster_label = k_means.labels_'''
+        cluster_label = data.y
+
+        data.list = []  # i-th object of this list means a graph data of i-th cluster
+        for c_i in range(self.c):
+            data_c_i = Data()
+
+            idxes_of_c_i = np.where(cluster_label == c_i)[0]
+            G_c_i = G.subgraph(idxes_of_c_i)
+
+            # select center_node of G_c_i based on Pagerank
+            nodes_rank = nx.pagerank_scipy(G_c_i, alpha=0.85)
+            center_node_idx = max((v, k) for k, v in nodes_rank.items())[1]
+            data_c_i.center_idx = center_node_idx
+
+            # Get context that is between l1 and the max diameter of the G_c_i
+            l1_node_idxes = nx.single_source_shortest_path_length(G_c_i, center_node_idx,
+                                                                  self.l1).keys()
+            l2_node_idxes = idxes_of_c_i
+            context_node_idxes = set(l1_node_idxes).symmetric_difference(
+                set(l2_node_idxes))
+            context_G_c_i = G_c_i.subgraph(context_node_idxes)
+            plot_G_contextG_pair(G_c_i, context_G_c_i, center_node_idx, c_i)
+            context_G_c_i, context_node_map_c_i = reset_idxes(
+                context_G_c_i)
+            context_data = nx_to_graph_data_obj(context_G_c_i)
+            data_c_i.x_context = context_data.x.to(self.device)
+            data_c_i.edge_index_context = context_data.edge_index.to(
+                self.device)
+
+            # Get indices of overlapping nodes between G_c_i and context_G_c_i,
+            context_substruct_overlap_idxes = list(context_node_idxes)
+            context_substruct_overlap_idxes_reorder = [context_node_map_c_i[old_idx]
+                                                       for old_idx in context_substruct_overlap_idxes]
+            data_c_i.context_idxes = torch.tensor(
+                context_substruct_overlap_idxes_reorder)
+
+            data.list.append(data_c_i)
+
+        return data
+
+
+def nx_to_graph_data_obj(g):
 
     # nodes
     n_nodes = g.number_of_nodes()
@@ -176,14 +221,6 @@ def remake_to_labelorder(pred_tensor: torch.tensor, label_tensor: torch.tensor) 
     w = torch.FloatTensor([[1 if j == clus_label_map[i] else 0 for j in range(n_of_clusters)]
                            for i in range(n_of_clusters)]).cuda()
     return torch.mm(pred_tensor, w)
-
-
-def kmeans(data, n_of_clusters):
-    n_of_clusters = n_of_clusters.cuda().cpu().detach().numpy().copy()
-    k_means = KMeans(n_of_clusters, n_init=10, random_state=0, tol=0.0000001)
-    k_means.fit(data)
-    result = torch.LongTensor(k_means.labels_).cuda()
-    return result
 
 
 def fuzzy_cmeans(data, n_of_clusters, *, m=1.07):
