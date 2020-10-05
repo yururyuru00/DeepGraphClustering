@@ -14,41 +14,48 @@ import random
 import itertools
 
 
-class MaskEdge:
-    def __init__(self, mask_rate):
-        self.mask_rate = mask_rate
+class Mask:
+    def __init__(self, mask_rate_node, mask_rate_edge):
+        self.mask_rate_node = mask_rate_node
+        self.mask_rate_edge = mask_rate_edge
 
     def __call__(self, data):
 
-        # sample some distinct edges to be masked, based on mask rate
-        A = utils.to_dense_adj(data.edge_index)[0]
-
         num_nodes = data.x.size()[0]
-        edge_label_list = []
-        for (i, j) in itertools.combinations(range(num_nodes), 2):
-            if(A[i][j] == 1 or A[j][i] == 1):
-                edge_label_list.append(1)
-                if(random.random() < self.mask_rate):
-                    A[i][j] = 0
-                    A[j][i] = 0
-            else:
-                edge_label_list.append(0)
-        data.edge_index = utils.dense_to_sparse(A)[0]
-        data.edge_label = torch.tensor(edge_label_list, dtype=torch.long)
 
-        data.masked_node_idx = torch.tensor(masked_node_indices)
+        # sample some distinct nodes to be masked, based on mask rate
+        if(self.mask_rate_node > 0.):
+            n_class = torch.max(data.y)+1
+            data.x = torch.nn.functional.one_hot(data.y, n_class).float()
+            sample_size = int(num_nodes * self.mask_rate_node)
+            masked_node_indices = random.sample(range(num_nodes), sample_size)
 
-        # create ground truth node features corresponding to the masked node
-        mask_node_labels_list = []
-        for idx in masked_node_indices:
-            mask_node_labels_list.append(data.x[idx].view(1, -1))
-        data.mask_node_label = torch.cat(mask_node_labels_list, dim=0)
+            mask_node_labels_list = []
+            for idx in masked_node_indices:
+                mask_node_labels_list.append(
+                    torch.argmax(data.x[idx]).long().view(-1))
+            data.mask_node_label = torch.cat(mask_node_labels_list, dim=0)
+            data.masked_node_indices = torch.tensor(masked_node_indices)
 
-        # created new masked data x, where some nodes have masked feature
-        num_features = data.x.size()[1]
-        for idx in masked_node_indices:
-            data.x[idx] = torch.tensor(
-                np.zeros(num_features), dtype=torch.float)
+            # modify the original node feature of the masked node
+            for idx in masked_node_indices:
+                data.x[idx] = torch.zeros(n_class, dtype=torch.float)
+
+        # sample some distinct edges to be masked, based on mask rate
+        if(self.mask_rate_edge > 0.):
+            A = utils.to_dense_adj(data.edge_index)[0]
+
+            edge_label_list = []
+            for (i, j) in itertools.combinations(range(num_nodes), 2):
+                if(A[i][j] == 1 or A[j][i] == 1):
+                    edge_label_list.append(1)
+                    if(random.random() < self.mask_rate_edge):
+                        A[i][j] = 0
+                        A[j][i] = 0
+                else:
+                    edge_label_list.append(0)
+            data.edge_index = utils.dense_to_sparse(A)[0]
+            data.edge_label = torch.tensor(edge_label_list, dtype=torch.long)
 
         return data
 

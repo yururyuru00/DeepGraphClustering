@@ -9,44 +9,51 @@ import torch.optim as optim
 import os
 from sklearn.cluster import KMeans
 import sklearn.metrics.cluster as clus
+import itertools
 
-from utilities import MaskEdge, nmi
+from utilities import Mask, nmi
 from models import GCN
 from debug import plot_Zn
 
-criterion = torch.nn.CrossEntropyLoss()
+criterion1 = torch.nn.CrossEntropyLoss()
+criterion2 = torch.nn.BCELoss()
 
 
-def train(epoch, model, linear_pred_nodes, data,
+def train(args, epoch, model, linear_pred_nodes, data,
           optimizer, optimizer_linear, log):
     model.train()
     linear_pred_nodes.train()
 
-    # predict the edge types.
     node_rep = model(data.x, data.edge_index)
-
-    masked_node_rep = node_rep[data.masked_node_idx]
-    masked_node_pre = linear_pred_nodes(masked_node_rep)
-
-    # loss and train
-    loss = criterion(masked_node_pre.double(), data.mask_node_label[:, 0])
-
-    optimizer.zero_grad()
-    optimizer_linear.zero_grad()
-
-    loss.backward()
-
-    optimizer.step()
-    optimizer_linear.step()
-
-    # log and debug
-    log['loss'].append(loss)
+    num_nodes = data.x.size()[0]
 
     if(epoch % 10 == 0):
         Zn_np = node_rep.cuda().cpu().detach().numpy().copy()
         label = data.y.cuda().cpu().detach().numpy().copy()
         plot_Zn(
             Zn_np, label, path_save='./data/experiment/test/Zn_masknode_epoch{}'.format(epoch))
+
+    # mask the node representation
+    if(args.mask_rate_node > 0.):
+        pred_nodes = linear_pred_nodes(node_rep[data.masked_node_indices])
+        loss = criterion1(pred_nodes.double(), data.mask_node_label)
+
+    # mask the edge representation
+    if(args.mask_rate_edge > 0.):
+        for i, (u, v) in enumerate(itertools.combinations(range(num_nodes), 2)):
+            edge_rep = node_rep[u] + node_rep[v]
+            edge_pre = linear_pred_nodes(edge_rep)
+
+            loss += criterion2(edge_pre.double(), data.edge_label[i].view(-1))
+
+    optimizer.zero_grad()
+    optimizer_linear.zero_grad()
+    loss.backward()
+    optimizer.step()
+    optimizer_linear.step()
+
+    # log and debug
+    log['loss'].append(loss)
 
     return float(loss.detach().cpu().item())
 
@@ -62,9 +69,11 @@ parser.add_argument('--decay', type=float, default=5e-4,
                     help='weight decay (default: 5e-4)')
 parser.add_argument('--epochs', type=int, default=100,
                     help='number of epochs to train (defalt: 100)')
-parser.add_argument('--mask_rate', type=float, default=0.15,
+parser.add_argument('--mask_rate_node', type=float, default=0.15,
                     help='mask nodes ratio (default: 0.15)')
-parser.add_argument('--hidden', type=list, default=[1024, 512, 256],
+parser.add_argument('--mask_rate_edge', type=float, default=0.00,
+                    help='mask nodes ratio (default: 0.00)')
+parser.add_argument('--hidden', type=list, default=[7, 7, 7],
                     help='number of hidden layer of GCN for substract representation')
 args = parser.parse_args()
 
@@ -72,10 +81,11 @@ args = parser.parse_args()
 os.makedirs('./data/experiment/test')
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 if(args.dataset == 'KarateClub'):
-    dataset = KarateClub(transform=MaskEdge(args.mask_rate))
+    dataset = KarateClub(transform=Mask(
+        args.mask_rate_node, args.mask_rate_edge))
 else:
     dataset = Planetoid(root='./data/experiment/', name=args.dataset,
-                        transform=MaskEdge(args.mask_rate))
+                        transform=Mask(args.mask_rate_node, args.mask_rate_edge))
 data = dataset[0].to(device)
 
 # set up GCN model and linear model to predict node features
@@ -84,7 +94,7 @@ model = GCN(n_attributes, args.hidden).to(device)
 
 dim_emb = args.hidden[-1]
 # below linear model predict if edge between nodes is exist or not
-linear_pred_nodes = torch.nn.Linear(dim_emb, 1).to(device)
+linear_pred_nodes = torch.nn.Linear(dim_emb, args.n_class).to(device)
 
 # set up optimizer for the GNNs
 optimizer = optim.Adam(
@@ -95,7 +105,7 @@ optimizer_linear = optim.Adam(
 # train
 log = {'loss': []}
 for epoch in tqdm(range(args.epochs)):
-    loss = train(epoch, model, linear_pred_nodes, data,
+    loss = train(args, epoch, model, linear_pred_nodes, data,
                  optimizer, optimizer_linear, log)
 torch.save(model.state_dict(), 'pretrained_gcn')
 
