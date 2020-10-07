@@ -35,7 +35,7 @@ class Mask:
                 mask_node_labels_list.append(
                     torch.argmax(data.x[idx]).long().view(-1))
             data.mask_node_label = torch.cat(mask_node_labels_list, dim=0)
-            data.masked_node_indices = torch.tensor(masked_node_indices)
+            data.masked_node_indxes = torch.tensor(masked_node_indices)
 
             # modify the original node feature of the masked node
             for idx in masked_node_indices:
@@ -43,19 +43,27 @@ class Mask:
 
         # sample some distinct edges to be masked, based on mask rate
         if(self.mask_rate_edge > 0.):
-            A = utils.to_dense_adj(data.edge_index)[0]
+            num_edges = int(data.edge_index.size()[1])
+            sample_size = int(num_edges * self.mask_rate_edge)
 
-            edge_label_list = []
-            for (i, j) in itertools.combinations(range(num_nodes), 2):
-                if(A[i][j] == 1 or A[j][i] == 1):
-                    edge_label_list.append(1)
-                    if(random.random() < self.mask_rate_edge):
-                        A[i][j] = 0
-                        A[j][i] = 0
-                else:
-                    edge_label_list.append(0)
+            pair_list = set(itertools.combinations(range(num_nodes), 2))
+            edge_pair_list = set([(u, v)
+                                  for u, v in data.edge_index.numpy().T])
+            noedge_pair_list = pair_list - edge_pair_list
+
+            masked1 = random.sample(edge_pair_list, sample_size)
+            masked2 = random.sample(noedge_pair_list, sample_size)
+            masked_edge_idxes = list(masked1) + list(masked2)
+            data.mask_edge_idxes = torch.tensor(
+                [[u, v] for u, v in masked_edge_idxes])
+            data.mask_edge_label = torch.cat([torch.ones(sample_size, dtype=torch.float),
+                                              torch.zeros(sample_size, dtype=torch.float)], dim=0)
+
+            A = utils.to_dense_adj(data.edge_index)[0]
+            for (u, v) in masked1:
+                A[u][v] = 0
+                A[v][u] = 0
             data.edge_index = utils.dense_to_sparse(A)[0]
-            data.edge_label = torch.tensor(edge_label_list, dtype=torch.long)
 
         return data
 
