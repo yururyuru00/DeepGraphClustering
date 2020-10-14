@@ -2,6 +2,7 @@ import random
 import numpy as np
 import scipy.sparse as sp
 import torch
+from sklearn.tree import DecisionTreeClassifier
 from sklearn.cluster import KMeans
 from skfuzzy.cluster import cmeans
 import sklearn.metrics.cluster as clus
@@ -9,9 +10,8 @@ import itertools
 import networkx as nx
 from torch_geometric.data import Data
 from torch_geometric import utils
+
 from debug import plot_G_contextG_pair
-import random
-import itertools
 
 
 class Mask:
@@ -26,20 +26,26 @@ class Mask:
         # sample some distinct nodes to be masked, based on mask rate
         if(self.mask_rate_node > 0.):
             n_class = torch.max(data.y)+1
-            data.x = torch.nn.functional.one_hot(data.y, n_class).float()
             sample_size = int(num_nodes * self.mask_rate_node)
-            masked_node_indices = random.sample(range(num_nodes), sample_size)
+            masked_node_idxes = random.sample(range(num_nodes), sample_size)
+
+            clf = DecisionTreeClassifier(max_depth=8)
+            clf = clf.fit(data.x, data.y)
+            f_importance = clf.feature_importances_
+            hit_idxes = [idx for idx, val in enumerate(
+                f_importance) if val > 0]
 
             mask_node_labels_list = []
-            for idx in masked_node_indices:
+            for idx in masked_node_idxes:
                 mask_node_labels_list.append(
-                    torch.argmax(data.x[idx]).long().view(-1))
+                    data.x[idx][hit_idxes].view(1, -1))
             data.mask_node_label = torch.cat(mask_node_labels_list, dim=0)
-            data.masked_node_indxes = torch.tensor(masked_node_indices)
+            data.masked_node_idxes = torch.tensor(masked_node_idxes)
 
             # modify the original node feature of the masked node
-            for idx in masked_node_indices:
-                data.x[idx] = torch.zeros(n_class, dtype=torch.float)
+            n_attribute = data.x.size()[1]
+            for idx in masked_node_idxes:
+                data.x[idx] = torch.zeros(n_attribute, dtype=torch.float)
 
         # sample some distinct edges to be masked, based on mask rate
         if(self.mask_rate_edge > 0.):
@@ -52,12 +58,12 @@ class Mask:
             noedge_pair_list = pair_list - edge_pair_list
 
             masked1 = random.sample(edge_pair_list, sample_size)
-            masked2 = random.sample(noedge_pair_list, sample_size)
+            masked2 = random.sample(noedge_pair_list, sample_size*5)
             masked_edge_idxes = list(masked1) + list(masked2)
             data.mask_edge_idxes = torch.tensor(
                 [[u, v] for u, v in masked_edge_idxes])
             data.mask_edge_label = torch.cat([torch.ones(sample_size, dtype=torch.float),
-                                              torch.zeros(sample_size, dtype=torch.float)], dim=0)
+                                              torch.zeros(sample_size*5, dtype=torch.float)], dim=0)
 
             A = utils.to_dense_adj(data.edge_index)[0]
             for (u, v) in masked1:

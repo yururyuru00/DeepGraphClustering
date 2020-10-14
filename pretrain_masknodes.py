@@ -15,7 +15,7 @@ from utilities import Mask, nmi
 from models import GCN
 from debug import plot_Zn
 
-criterion1 = torch.nn.CrossEntropyLoss()
+criterion1 = torch.nn.BCEWithLogitsLoss()
 criterion2 = torch.nn.BCEWithLogitsLoss()
 
 
@@ -75,10 +75,10 @@ parser.add_argument('--decay', type=float, default=5e-4,
                     help='weight decay (default: 5e-4)')
 parser.add_argument('--epochs', type=int, default=100,
                     help='number of epochs to train (defalt: 100)')
-parser.add_argument('--mask_rate_node', type=float, default=0.00,
-                    help='mask nodes ratio (default: 0.00)')
-parser.add_argument('--mask_rate_edge', type=float, default=0.15,
-                    help='mask edges ratio (default: 0.15)')
+parser.add_argument('--mask_rate_node', type=float, default=0.15,
+                    help='mask nodes ratio (default: 0.15)')
+parser.add_argument('--mask_rate_edge', type=float, default=0.00,
+                    help='mask edges ratio (default: 0.00)')
 parser.add_argument('--hidden', type=list, default=[1024, 512, 256],
                     help='number of hidden layer of GCN for substract representation')
 args = parser.parse_args()
@@ -100,7 +100,8 @@ model = GCN(n_attributes, args.hidden).to(device)
 
 dim_emb = args.hidden[-1]
 # below linear model predict if edge between nodes is exist or not
-linear_pred_nodes = torch.nn.Linear(dim_emb, args.n_class).to(device)
+hit_idxes_size = data.mask_node_label.size()[1]
+linear_pred_nodes = torch.nn.Linear(dim_emb, hit_idxes_size).to(device)
 linear_pred_edges = torch.nn.Linear(dim_emb, 1).to(device)
 
 # set up optimizer for the GNNs
