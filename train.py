@@ -3,12 +3,14 @@ import matplotlib.pyplot as plt
 import torch
 import argparse
 from torch_geometric.datasets import KarateClub
+from torch_geometric.datasets import Planetoid
 import torch.nn.functional as F
-from utilities import remake_to_labelorder, kmeans, nmi, purity
+from utilities import remake_to_labelorder, nmi, purity
 from layers import FrobeniusNorm
 from models import DGC, GCN
 import torch.optim as optim
 from sklearn.cluster import KMeans
+import math
 
 
 loss_frobenius = FrobeniusNorm()
@@ -48,6 +50,8 @@ def train(model_dgc, data, optimizer, log):
 
 parser = argparse.ArgumentParser(
     description='PyTorch implementation of pre-training of GNN')
+parser.add_argument('--dataset', type=str, default='Cora',
+                    help='dataset')
 parser.add_argument('--lr', type=float, default=0.001,
                     help='learning rate (default: 0.001)')
 parser.add_argument('--weight_decay', type=float, default=5e-4,
@@ -60,16 +64,16 @@ args = parser.parse_args()
 
 # load and transform dataset
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-dataset = KarateClub(transform=None)
+dataset = Planetoid(root='./data/experiment/', name=args.dataset)
 data = dataset[0]
 print(data, end='\n\n')
 
 # set up DGC model
 n_attributes = data.x.shape[1]
 n_class = torch.max(data.y).cuda().cpu().detach().numpy().copy()+1
-hidden = {'gc': [1024, 768, 512, 384, 256],
+hidden = {'gc': [1024, 512, 256],
           'clustering': [64, 32], 'reconstruct': [128, 64]}
-base_model = GCN(n_layer=5, n_feat=n_attributes, hid=hidden['gc']).to(device)
+base_model = GCN(n_feat=n_attributes, hid=hidden['gc']).to(device)
 base_model.load_state_dict(torch.load('./pretrained_gcn'))
 model_dgc = DGC(base=base_model, n_feat=n_attributes, n_hid=hidden,
                 n_class=n_class, dropout=args.dropout).to(device)
@@ -86,8 +90,31 @@ for epoch in tqdm(range(args.epochs)):
 
 # log
 fig = plt.figure(figsize=(17, 17))
-plt.plot(log['loss_clustering'], label='loss clustering')
+plt.plot(log['nmi'], label='nmi')
 plt.legend(loc='upper right', prop={'size': 12})
 plt.tick_params(axis='x', labelsize='12')
 plt.tick_params(axis='y', labelsize='12')
 plt.show()
+
+fig = plt.figure(figsize=(35, 35))
+ax1, ax2, ax3, ax4 = fig.add_subplot(2, 2, 1), fig.add_subplot(2, 2, 2), \
+    fig.add_subplot(2, 2, 3), fig.add_subplot(2, 2, 4)
+ax1.plot(log['loss_clustering'], label='loss_clustering')
+ax1.legend(loc='upper right', prop={'size': 25})
+ax1.tick_params(axis='x', labelsize='23')
+ax1.tick_params(axis='y', labelsize='23')
+ax2.plot(log['loss_reconstruct'], label='loss_reconstruct')
+ax2.legend(loc='upper right', prop={'size': 25})
+ax2.tick_params(axis='x', labelsize='23')
+ax2.tick_params(axis='y', labelsize='23')
+ax3.plot(log['nmi'], label='nmi')
+ax3.legend(loc='lower right', prop={'size': 25})
+ax3.tick_params(axis='x', labelsize='23')
+ax3.tick_params(axis='y', labelsize='23')
+ax3.set_ylim(min(log['nmi']), math.ceil(10*max(log['nmi']))/10)
+ax4.plot(log['pur'], label='purity')
+ax4.legend(loc='lower right', prop={'size': 25})
+ax4.tick_params(axis='x', labelsize='23')
+ax4.tick_params(axis='y', labelsize='23')
+ax4.set_ylim(min(log['pur']), math.ceil(10*max(log['pur']))/10)
+plt.savefig('./data/experiment/test/result.png')
