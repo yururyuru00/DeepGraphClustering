@@ -26,21 +26,20 @@ def train(args, epoch, data, models, optimizers, log):
     model.train()
     linear_pred_nodes.train()
 
-    node_rep = model(data.x, data.edge_index)aaa
-    num_nodes = data.x.size()[0]
+    node_rep = model(data.x, data.edge_index)
 
     loss = torch.tensor(0.).float().to(device=data.x.device.type)
     # mask the node representation
     if(args.mask_rate_node > 0.):
         pred_nodes = linear_pred_nodes(node_rep[data.masked_node_idxes])
-        loss += criterion1(pred_nodes.double(), data.mask_node_label)
+        loss += criterion1(pred_nodes.double(), data.masked_node_label)
 
     # mask the edge representation
     if(args.mask_rate_edge > 0.):
-        edge_rep = node_rep[data.mask_edge_idxes[:, 0]] + \
-            node_rep[data.mask_edge_idxes[:, 1]]
+        edge_rep = node_rep[data.masked_edge_idxes[:, 0]] + \
+            node_rep[data.masked_edge_idxes[:, 1]]
         pred_edges = linear_pred_edges(edge_rep)
-        loss += criterion2(pred_edges.view(-1), data.mask_edge_label)
+        loss += criterion2(pred_edges.view(-1), data.masked_edge_label)
 
     optimizer.zero_grad()
     optimizer_linear_nodes.zero_grad()
@@ -79,7 +78,7 @@ parser.add_argument('--mask_rate_node', type=float, default=0.15,
                     help='mask nodes ratio (default: 0.15)')
 parser.add_argument('--mask_rate_edge', type=float, default=0.00,
                     help='mask edges ratio (default: 0.00)')
-parser.add_argument('--hidden', type=list, default=[1024, 512, 256],
+parser.add_argument('--hidden', type=list, default=[128, 128, 128, 128],
                     help='number of hidden layer of GCN for substract representation')
 args = parser.parse_args()
 
@@ -96,12 +95,13 @@ data = dataset[0].to(device)
 
 # set up GCN model and linear model to predict node features
 n_attributes = data.x.shape[1]
-hit_idxes_size = data.x.size()[1]
-model = GCN(hit_idxes_size, [hit_idxes_size for i in range(3)]).to(device)
+hit_idxes_size = data.masked_node_label.size()[1]
+print('hit_idx_size : {}'.format(hit_idxes_size))
+model = GCN(n_attributes, args.hidden).to(device)
 
 dim_emb = args.hidden[-1]
 # below linear model predict if edge between nodes is exist or not
-linear_pred_nodes = torch.nn.Linear(hit_idxes_size, hit_idxes_size).to(device)
+linear_pred_nodes = torch.nn.Linear(dim_emb, hit_idxes_size).to(device)
 linear_pred_edges = torch.nn.Linear(dim_emb, 1).to(device)
 
 # set up optimizer for the GNNs

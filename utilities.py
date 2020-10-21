@@ -25,28 +25,28 @@ class Mask:
 
         num_nodes = data.x.size()[0]
 
-        # sample some distinct nodes to be masked, based on mask rate
+        # get pseudo label and hit idexes
+        pseudo_label = SpectralClustering(data)
+
+        clf = DecisionTreeClassifier(max_depth=4)
+        clf = clf.fit(data.x, pseudo_label)
+        f_importance = clf.feature_importances_
+        hit_idxes = [idx for idx, val in enumerate(
+            f_importance) if val > 0]
+
+        # sample some distinct nodes to be masked
         if(self.mask_rate_node > 0.):
             sample_size = int(num_nodes * self.mask_rate_node)
             masked_node_idxes = random.sample(range(num_nodes), sample_size)
 
-            # get pseudo label
-            pseudo_label = SpectralClustering(data)
-
-            clf = DecisionTreeClassifier(max_depth=8)
-            clf = clf.fit(data.x, pseudo_label)
-            f_importance = clf.feature_importances_
-            hit_idxes = [idx for idx, val in enumerate(
-                f_importance) if val > 0]
+            masked_node_labels_list = []
+            for idx in masked_node_idxes:
+                masked_node_labels_list.append(
+                    data.x[idx][hit_idxes].view(1, -1))
+            data.masked_node_label = torch.cat(masked_node_labels_list, dim=0)
+            data.masked_node_idxes = torch.tensor(masked_node_idxes)
 
             data.x = data.x[:, hit_idxes]
-
-            mask_node_labels_list = []
-            for idx in masked_node_idxes:
-                mask_node_labels_list.append(
-                    data.x[idx].view(1, -1))
-            data.mask_node_label = torch.cat(mask_node_labels_list, dim=0)
-            data.masked_node_idxes = torch.tensor(masked_node_idxes)
 
             # mask the original node feature of the masked node
             n_attribute = data.x.size()[1]
@@ -66,10 +66,10 @@ class Mask:
             masked1 = random.sample(edge_pair_list, sample_size)
             masked2 = random.sample(noedge_pair_list, sample_size*5)
             masked_edge_idxes = list(masked1) + list(masked2)
-            data.mask_edge_idxes = torch.tensor(
+            data.masked_edge_idxes = torch.tensor(
                 [[u, v] for u, v in masked_edge_idxes])
-            data.mask_edge_label = torch.cat([torch.ones(sample_size, dtype=torch.float),
-                                              torch.zeros(sample_size*5, dtype=torch.float)], dim=0)
+            data.masked_edge_label = torch.cat([torch.ones(sample_size, dtype=torch.float),
+                                                torch.zeros(sample_size*5, dtype=torch.float)], dim=0)
 
             A = utils.to_dense_adj(data.edge_index)[0]
             for (u, v) in masked1:
