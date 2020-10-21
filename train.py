@@ -12,7 +12,6 @@ import torch.optim as optim
 from sklearn.cluster import KMeans
 import math
 
-
 loss_frobenius = FrobeniusNorm()
 
 

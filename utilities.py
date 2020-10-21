@@ -27,7 +27,6 @@ class Mask:
 
         # sample some distinct nodes to be masked, based on mask rate
         if(self.mask_rate_node > 0.):
-            n_class = torch.max(data.y)+1
             sample_size = int(num_nodes * self.mask_rate_node)
             masked_node_idxes = random.sample(range(num_nodes), sample_size)
 
@@ -40,17 +39,19 @@ class Mask:
             hit_idxes = [idx for idx, val in enumerate(
                 f_importance) if val > 0]
 
+            data.x = data.x[:, hit_idxes]
+
             mask_node_labels_list = []
             for idx in masked_node_idxes:
                 mask_node_labels_list.append(
-                    data.x[idx][hit_idxes].view(1, -1))
+                    data.x[idx].view(1, -1))
             data.mask_node_label = torch.cat(mask_node_labels_list, dim=0)
             data.masked_node_idxes = torch.tensor(masked_node_idxes)
 
-            # modify the original node feature of the masked node
+            # mask the original node feature of the masked node
             n_attribute = data.x.size()[1]
             for idx in masked_node_idxes:
-                data.x[idx] = torch.zeros(n_attribute, dtype=torch.float)
+                data.x[idx] = torch.zeros(len(hit_idxes), dtype=torch.float)
 
         # sample some distinct edges to be masked, based on mask rate
         if(self.mask_rate_edge > 0.):

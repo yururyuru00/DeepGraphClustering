@@ -26,7 +26,7 @@ def train(args, epoch, data, models, optimizers, log):
     model.train()
     linear_pred_nodes.train()
 
-    node_rep = model(data.x, data.edge_index)
+    node_rep = model(data.x, data.edge_index)aaa
     num_nodes = data.x.size()[0]
 
     loss = torch.tensor(0.).float().to(device=data.x.device.type)
@@ -96,12 +96,12 @@ data = dataset[0].to(device)
 
 # set up GCN model and linear model to predict node features
 n_attributes = data.x.shape[1]
-model = GCN(n_attributes, args.hidden).to(device)
+hit_idxes_size = data.x.size()[1]
+model = GCN(hit_idxes_size, [hit_idxes_size for i in range(3)]).to(device)
 
 dim_emb = args.hidden[-1]
 # below linear model predict if edge between nodes is exist or not
-hit_idxes_size = data.mask_node_label.size()[1]
-linear_pred_nodes = torch.nn.Linear(dim_emb, hit_idxes_size).to(device)
+linear_pred_nodes = torch.nn.Linear(hit_idxes_size, hit_idxes_size).to(device)
 linear_pred_edges = torch.nn.Linear(dim_emb, 1).to(device)
 
 # set up optimizer for the GNNs
