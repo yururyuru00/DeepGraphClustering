@@ -55,24 +55,25 @@ class Mask:
 
         # sample some distinct edges to be masked, based on mask rate
         if(self.mask_rate_edge > 0.):
+            data.x = data.x[:, hit_idxes]
+
             num_edges = int(data.edge_index.size()[1])
             sample_size = int(num_edges * self.mask_rate_edge)
 
-            pair_list = set(itertools.combinations(range(num_nodes), 2))
             edge_pair_list = set([(u, v)
                                   for u, v in data.edge_index.numpy().T])
-            noedge_pair_list = pair_list - edge_pair_list
-
-            masked1 = random.sample(edge_pair_list, sample_size)
-            masked2 = random.sample(noedge_pair_list, sample_size*5)
-            masked_edge_idxes = list(masked1) + list(masked2)
-            data.masked_edge_idxes = torch.tensor(
-                [[u, v] for u, v in masked_edge_idxes])
-            data.masked_edge_label = torch.cat([torch.ones(sample_size, dtype=torch.float),
-                                                torch.zeros(sample_size*5, dtype=torch.float)], dim=0)
+            data.masked_edge_label = []
+            for u, v in itertools.combinations(range(num_nodes), 2):
+                if((u, v) in edge_pair_list):
+                    data.masked_edge_label.append(1)
+                else:
+                    data.masked_edge_label.append(0)
+            data.masked_edge_label = torch.tensor(
+                data.masked_edge_label, dtype=torch.float)
 
             A = utils.to_dense_adj(data.edge_index)[0]
-            for (u, v) in masked1:
+            masked_edge_idxes = random.sample(edge_pair_list, sample_size)
+            for (u, v) in masked_edge_idxes:
                 A[u][v] = 0
                 A[v][u] = 0
             data.edge_index = utils.dense_to_sparse(A)[0]
