@@ -1,6 +1,7 @@
 import math
 import numpy as np
 import torch
+from torch import nn
 from torch.nn.parameter import Parameter
 from torch.nn.modules.module import Module
 
@@ -24,13 +25,35 @@ class GraphConvolution(Module):
         if self.bias is not None:
             self.bias.data.uniform_(-stdv, stdv)
 
-    def forward(self, input, adj):  # input:特徴行列Z,    adj:隣接行列Aとして渡される
-        support = torch.mm(input, self.weight)  # 畳み込み DAZWの内，ZW(=support)の演算
-        output = torch.spmm(adj, support)  # 畳み込み DAZWの内，(DA)supportの演算
-        if self.bias is not None:  # 今回はbiasあり
+    def forward(self, input, adj):
+        support = torch.mm(input, self.weight)
+        output = torch.spmm(adj, support)
+        if self.bias is not None:
             return output + self.bias
         else:
             return output
+
+class NeuralTensorNetwork(Module):
+    def __init__(self, in_features, out_features):
+        super(NeuralTensorNetwork, self).__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.weight1 = Parameter(torch.FloatTensor(in_features, in_features))
+        self.weight2 = Parameter(torch.FloatTensor(2*in_features))
+        self.bias = Parameter(torch.FloatTensor(out_features))
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        nn.init.xavier_uniform_(self.weight1)
+        nn.init.uniform_(self.weight2, 0, 1)
+        nn.init.uniform_(self.bias, 0, 1)
+
+    def forward(self, input1, input2):
+        input1_ = torch.matmul(input1,self.weight1)
+        output1 = torch.matmul(input1_, input2)
+        output2 = torch.dot(self.weight2, torch.cat([input1, input2], axis=0))
+        
+        return torch.tanh(output1 + output2 + self.bias)
 
 
 class FrobeniusNorm(Module):

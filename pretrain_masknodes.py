@@ -13,11 +13,11 @@ import itertools
 
 from utilities import Mask, nmi
 from models import GCN
+from layers import NeuralTensorNetwork
 from debug import plot_Zn
 
 criterion1 = torch.nn.BCEWithLogitsLoss()
 criterion2 = torch.nn.BCEWithLogitsLoss()
-
 
 def train(args, epoch, data, models, optimizers, log):
     model, linear_pred_nodes, linear_pred_edges = models
@@ -25,6 +25,7 @@ def train(args, epoch, data, models, optimizers, log):
 
     model.train()
     linear_pred_nodes.train()
+    linear_pred_edges.train()
 
     node_rep = model(data.x, data.edge_index)
 
@@ -37,11 +38,12 @@ def train(args, epoch, data, models, optimizers, log):
     # mask the edge representation
     if(args.mask_rate_edge > 0.):
         num_nodes = data.x.size()[0]
-        edge_rep = torch.tensor([node_rep[u] * node_rep[v]
-                                 for u, v in itertools.combinations(range(num_nodes), 2)])
-        pred_edges = linear_pred_edges(edge_rep)
-        loss += criterion2(pred_edges.view(-1), data.masked_edge_label)
-
+        edge_preds = torch.FloatTensor([0.]).to(device=data.x.device.type)
+        for u, v in itertools.combinations(range(num_nodes), 2):
+            edge_pred = linear_pred_edges(node_rep[u], node_rep[v])
+            edge_preds = torch.cat([edge_preds, edge_pred], axis=0)
+        loss += criterion2(edge_preds, data.masked_edge_label)
+    
     optimizer.zero_grad()
     optimizer_linear_nodes.zero_grad()
     optimizer_linear_edges.zero_grad()
@@ -76,7 +78,7 @@ parser.add_argument('--decay', type=float, default=5e-4,
 parser.add_argument('--epochs', type=int, default=100,
                     help='number of epochs to train (defalt: 100)')
 parser.add_argument('--mask_rate_node', type=float, default=0.00,
-                    help='mask nodes ratio (default: 0.15)')
+                    help='mask nodes ratio (default: 0.00)')
 parser.add_argument('--mask_rate_edge', type=float, default=0.15,
                     help='mask edges ratio (default: 0.15)')
 parser.add_argument('--hidden', type=list, default=[128, 64, 32, 16],
@@ -103,7 +105,7 @@ model = GCN(n_attributes, args.hidden).to(device)
 dim_emb = args.hidden[-1]
 # below linear model predict if edge between nodes is exist or not
 linear_pred_nodes = torch.nn.Linear(dim_emb, hit_idxes_size).to(device)
-linear_pred_edges = torch.nn.Linear(dim_emb, 1).to(device)
+linear_pred_edges = NeuralTensorNetwork(dim_emb, 1).to(device)
 
 # set up optimizer for the GNNs
 optimizer = optim.Adam(
