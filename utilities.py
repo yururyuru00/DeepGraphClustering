@@ -13,7 +13,45 @@ from torch_geometric import utils
 from scipy.sparse.linalg import eigsh
 
 
-from debug import plot_G_contextG_pair
+# from debug import plot_G_contextG_pair
+
+class GraphAugmenter:
+    def __init__(self, num_steps, num_edges_per_node):
+        self.num_steps = num_steps
+        self.num_edges_per_node = num_edges_per_node
+
+    def __call__(self,data):
+        num_nodes = data.x.size()[0]
+        degree = [0 for w in range(num_nodes)]
+        sum_degree = 0
+
+        for i,j in data.edge_index.T:
+                degree[i] += 1
+                degree[j] += 1
+                sum_degree += 2
+
+        for step in range(self.num_steps):
+            
+            degree_buff = degree.copy()
+            w_list = []
+            for tri in range(3):
+                w = random.choices(range(num_nodes), weights=degree_buff)[0]
+                w_list.append(w)
+                degree_buff[w] = 0
+
+            for w in w_list:
+                # Barabasi Albert Algorithm
+                data.edge_index
+                data.x.append()
+                degree[w] += 1
+                sum_degree += 2
+
+                # Triad Formation Algorithm
+                w_neighbors = collect_neighbors(w)
+                u = random.sample(w_neighbors)
+
+def collect_neighbors(node):
+    pass
 
 
 class Mask:
@@ -55,25 +93,26 @@ class Mask:
 
         # sample some distinct edges to be masked, based on mask rate
         if(self.mask_rate_edge > 0.):
-            data.x = data.x[:, hit_idxes]
-
             num_edges = int(data.edge_index.size()[1])
             sample_size = int(num_edges * self.mask_rate_edge)
+            ratio_positive_negative = 1
 
+            pair_list = set(itertools.combinations(range(num_nodes), 2))
             edge_pair_list = set([(u, v)
                                   for u, v in data.edge_index.numpy().T])
-            data.masked_edge_label = []
-            for u, v in itertools.combinations(range(num_nodes), 2):
-                if((u, v) in edge_pair_list):
-                    data.masked_edge_label.append(1)
-                else:
-                    data.masked_edge_label.append(0)
-            data.masked_edge_label = torch.tensor(
-                data.masked_edge_label, dtype=torch.float)
+            noedge_pair_list = pair_list - edge_pair_list
+
+            masked1 = random.sample(edge_pair_list, sample_size)
+            masked2 = random.sample(noedge_pair_list, sample_size*ratio_positive_negative)
+            masked_edge_idxes = list(masked1) + list(masked2)
+            data.mask_edge_idxes = torch.tensor(
+                [[u, v] for u, v in masked_edge_idxes])
+            data.mask_edge_label = torch.cat([torch.ones(sample_size, dtype=torch.float),
+                                        torch.zeros(sample_size*ratio_positive_negative, 
+                                        dtype=torch.float)], dim=0)
 
             A = utils.to_dense_adj(data.edge_index)[0]
-            masked_edge_idxes = random.sample(edge_pair_list, sample_size)
-            for (u, v) in masked_edge_idxes:
+            for (u, v) in masked1:
                 A[u][v] = 0
                 A[v][u] = 0
             data.edge_index = utils.dense_to_sparse(A)[0]

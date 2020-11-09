@@ -68,7 +68,7 @@ def train(epoch, model_substruct, model_context, data, optimizer_substruct, opti
 
 parser = argparse.ArgumentParser(
     description='PyTorch implementation of pre-training of GNN')
-parser.add_argument('--dataset', type=str, default='KarateClub')
+parser.add_argument('--dataset', type=str, default='Cora')
 parser.add_argument('--n_class', type=int, default=2,
                     help='number of class')
 parser.add_argument('--lr', type=float, default=0.001,

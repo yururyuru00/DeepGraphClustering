@@ -8,7 +8,7 @@ from torch_geometric.datasets import Planetoid
 import torch.optim as optim
 import os
 from sklearn.cluster import KMeans
-import sklearn.metrics.cluster as clus
+from sklearn.metrics.cluster import normalized_mutual_info_score
 import itertools
 
 from utilities import Mask, nmi
@@ -38,11 +38,12 @@ def train(args, epoch, data, models, optimizers, log):
     # mask the edge representation
     if(args.mask_rate_edge > 0.):
         num_nodes = data.x.size()[0]
-        edge_preds = torch.FloatTensor([0.]).to(device=data.x.device.type)
-        for u, v in itertools.combinations(range(num_nodes), 2):
+        edge_preds = []
+        for u, v in data.mask_edge_idxes:
             edge_pred = linear_pred_edges(node_rep[u], node_rep[v])
-            edge_preds = torch.cat([edge_preds, edge_pred], axis=0)
-        loss += criterion2(edge_preds, data.masked_edge_label)
+            edge_preds.append(edge_pred)
+        edge_preds = torch.cat(edge_preds, axis=0)
+        loss += criterion2(edge_preds, data.mask_edge_label)
     
     optimizer.zero_grad()
     optimizer_linear_nodes.zero_grad()
@@ -62,6 +63,13 @@ def train(args, epoch, data, models, optimizers, log):
         label = data.y.cuda().cpu().detach().numpy().copy()
         plot_Zn(
             Zn_np, label, path_save='./data/experiment/test/Zn_masknode_epoch{}'.format(epoch))
+        
+        n_class = torch.max(data.y).cuda().cpu().detach().numpy().copy() + 1
+        k_means = KMeans(n_class, n_init=10, random_state=0, tol=0.0000001)
+        k_means.fit(Zn_np)
+        nmi = normalized_mutual_info_score(
+              data.y.cuda().cpu().detach().numpy().copy(), k_means.labels_)
+        log['nmi'].append(nmi)
 
     return float(loss.detach().cpu().item())
 
@@ -77,8 +85,8 @@ parser.add_argument('--decay', type=float, default=5e-4,
                     help='weight decay (default: 5e-4)')
 parser.add_argument('--epochs', type=int, default=100,
                     help='number of epochs to train (defalt: 100)')
-parser.add_argument('--mask_rate_node', type=float, default=0.00,
-                    help='mask nodes ratio (default: 0.00)')
+parser.add_argument('--mask_rate_node', type=float, default=0.15,
+                    help='mask nodes ratio (default: 0.15)')
 parser.add_argument('--mask_rate_edge', type=float, default=0.15,
                     help='mask edges ratio (default: 0.15)')
 parser.add_argument('--hidden', type=list, default=[128, 64, 32, 16],
@@ -119,15 +127,20 @@ models = [model, linear_pred_nodes, linear_pred_edges]
 optimizers = [optimizer, optimizer_linear_nodes, optimizer_linear_edges]
 
 # train
-log = {'loss': []}
+log = {'loss': [], 'nmi': []}
 for epoch in tqdm(range(args.epochs)):
     loss = train(args, epoch, data, models, optimizers, log)
 torch.save(model.state_dict(), 'pretrained_gcn')
 
-# log
-fig = plt.figure(figsize=(17, 17))
-plt.plot(log['loss'], label='loss')
-plt.legend(loc='upper right', prop={'size': 12})
-plt.tick_params(axis='x', labelsize='12')
-plt.tick_params(axis='y', labelsize='12')
+fig = plt.figure(figsize=(35, 35))
+ax1, ax2 = fig.add_subplot(2, 1, 1), fig.add_subplot(2, 1, 2)
+ax1.plot(log['loss'], label='loss')
+ax1.legend(loc='upper right', prop={'size': 25})
+ax1.tick_params(axis='x', labelsize='23')
+ax1.tick_params(axis='y', labelsize='23')
+ax2.plot(log['nmi'], label='nmi')
+ax2.legend(loc='upper left', prop={'size': 25})
+ax2.tick_params(axis='x', labelsize='23')
+ax2.tick_params(axis='y', labelsize='23')
 plt.savefig('./data/experiment/test/result.png')
+
