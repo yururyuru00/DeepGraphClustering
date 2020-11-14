@@ -13,7 +13,7 @@ from torch_geometric import utils
 from scipy.sparse.linalg import eigsh
 
 
-# from debug import plot_G_contextG_pair
+from debug import plot_G_contextG_pair
 
 class GraphAugmenter:
     def __init__(self, num_steps, num_edges_per_node_BA, 
@@ -33,26 +33,30 @@ class GraphAugmenter:
 
         for step in range(self.num_steps):
 
-            data.x = torch.cat((data.x, torch.zeros(1, num_dims)), dim=0)
+            # add new node
+            new_node_attr = torch.zeros(1, num_dims, dtype=torch.float)
             data.y = torch.cat((data.y, torch.LongTensor([7])), 
-                                dim=0) # label7 means augmented vertices
+                                dim=0) # label 7 means augmented vertices
             num_nodes += 1
             new_node_id = num_nodes-1
+            neighbor_node_idxes_of_newnode = []
 
+            # select nodes which are connected to new node (BA algorithm)
             degree_buff = degree.copy()
             w_list = []
             for tri in range(self.num_edges_per_node_BA):
                 w = random.choices(range(num_nodes-1), weights=degree_buff)[0]
                 w_list.append(w)
                 degree_buff[w] = 0
+            degree.append(0) # append new node's degree
 
-            degree.append(0) # degee of new node
             for w in w_list:
 
                 # Barabasi Albert (BA) Algorithm
                 data.edge_index = torch.cat((data.edge_index, torch.tensor([[new_node_id], [w]])), dim=1)
                 degree[w] += 1
                 degree[new_node_id] += 1
+                neighbor_node_idxes_of_newnode.append(w)
 
                 # Triad Formation (TF) Algorithm   
                 u_list = sample_from_neighbors(data, w, self.num_edges_per_node_TF)
@@ -60,7 +64,14 @@ class GraphAugmenter:
                     data.edge_index = torch.cat((data.edge_index, torch.tensor([[new_node_id], [u]])), dim=1)
                     degree[u] += 1
                     degree[new_node_id] += 1
+                    neighbor_node_idxes_of_newnode.append(u)
 
+            # edit new node's attribute based on neighbor nodes
+            for idx in neighbor_node_idxes_of_newnode:
+                new_node_attr = torch.cat((new_node_attr, data.x[idx].view(1, -1)), dim=0)
+            new_node_attr = torch.mean(new_node_attr, dim=0, keepdim=True)
+            new_node_attr = torch.round(new_node_attr)
+            data.x = torch.cat((data.x, new_node_attr), dim=0)
 
         return data             
 
