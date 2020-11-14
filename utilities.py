@@ -16,43 +16,59 @@ from scipy.sparse.linalg import eigsh
 # from debug import plot_G_contextG_pair
 
 class GraphAugmenter:
-    def __init__(self, num_steps, num_edges_per_node):
+    def __init__(self, num_steps, num_edges_per_node_BA, 
+                    num_edges_per_node_TF):
         self.num_steps = num_steps
-        self.num_edges_per_node = num_edges_per_node
+        self.num_edges_per_node_BA = num_edges_per_node_BA
+        self.num_edges_per_node_TF = num_edges_per_node_TF
 
     def __call__(self,data):
         num_nodes = data.x.size()[0]
+        num_dims = data.x.size()[1]
         degree = [0 for w in range(num_nodes)]
-        sum_degree = 0
 
         for i,j in data.edge_index.T:
                 degree[i] += 1
                 degree[j] += 1
-                sum_degree += 2
 
         for step in range(self.num_steps):
-            
+
+            data.x = torch.cat((data.x, torch.zeros(1, num_dims)), dim=0)
+            data.y = torch.cat((data.y, torch.LongTensor([7])), 
+                                dim=0) # label7 means augmented vertices
+            num_nodes += 1
+            new_node_id = num_nodes-1
+
             degree_buff = degree.copy()
             w_list = []
-            for tri in range(3):
-                w = random.choices(range(num_nodes), weights=degree_buff)[0]
+            for tri in range(self.num_edges_per_node_BA):
+                w = random.choices(range(num_nodes-1), weights=degree_buff)[0]
                 w_list.append(w)
                 degree_buff[w] = 0
 
+            degree.append(0) # degee of new node
             for w in w_list:
-                # Barabasi Albert Algorithm
-                data.edge_index
-                data.x.append()
+
+                # Barabasi Albert (BA) Algorithm
+                data.edge_index = torch.cat((data.edge_index, torch.tensor([[new_node_id], [w]])), dim=1)
                 degree[w] += 1
-                sum_degree += 2
+                degree[new_node_id] += 1
 
-                # Triad Formation Algorithm
-                w_neighbors = collect_neighbors(w)
-                u = random.sample(w_neighbors)
+                # Triad Formation (TF) Algorithm   
+                u_list = sample_from_neighbors(data, w, self.num_edges_per_node_TF)
+                for u in u_list:
+                    data.edge_index = torch.cat((data.edge_index, torch.tensor([[new_node_id], [u]])), dim=1)
+                    degree[u] += 1
+                    degree[new_node_id] += 1
 
-def collect_neighbors(node):
-    pass
 
+        return data             
+
+def sample_from_neighbors(data, i, sample_size):
+    A = utils.to_dense_adj(data.edge_index)[0].cpu().numpy()
+    neighbors_list = [neighbor for neighbor in np.where(A[i]==1)[0]]
+    sample_size = min(len(neighbors_list), sample_size)
+    return random.sample(neighbors_list, sample_size)
 
 class Mask:
     def __init__(self, mask_rate_node, mask_rate_edge):
@@ -127,6 +143,16 @@ class ExtractSubstructureContextPair:
         self.device = device
 
     def __call__(self, data):
+
+        pseudo_label = SpectralClustering(data)
+        clf = DecisionTreeClassifier(max_depth=4)
+        clf = clf.fit(data.x, pseudo_label)
+        f_importance = clf.feature_importances_
+        hit_idxes = [idx for idx, val in enumerate(
+            f_importance) if val > 0]
+
+        data.x = data.x[:, hit_idxes]
+
         print('transformer called')
         G = graph_data_obj_to_nx(data)
 

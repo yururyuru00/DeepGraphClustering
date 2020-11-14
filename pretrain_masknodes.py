@@ -11,7 +11,7 @@ from sklearn.cluster import KMeans
 from sklearn.metrics.cluster import normalized_mutual_info_score
 import itertools
 
-from utilities import Mask, nmi
+from utilities import Mask, GraphAugmenter, nmi
 from models import GCN
 from layers import NeuralTensorNetwork
 from debug import plot_Zn

@@ -33,20 +33,6 @@ def train(epoch, model_substruct, model_context, data, optimizer_substruct, opti
         context_rep = model_context(data.list[c_i].x_context, data.list[c_i].edge_index_context)[
             data.list[c_i].context_idxes]
 
-        if(epoch % 10 == 0 and c_i == 0):  # debug
-            Zn_np = representations.cuda().cpu().detach().numpy().copy()
-            label = data.y.cuda().cpu().detach().numpy().copy()
-            plot_Zn(
-                Zn_np, label, path_save='./data/experiment/test/Zn_skipgram_epoch{}'.format(epoch))
-
-            n_class = torch.max(data.y).cuda(
-            ).cpu().detach().numpy().copy() + 1
-            k_means = KMeans(n_class, n_init=10, random_state=0, tol=0.0000001)
-            k_means.fit(Zn_np)
-            nmi = clus.adjusted_mutual_info_score(
-                k_means.labels_, data.y.cuda().cpu().detach().numpy().copy(), "arithmetic")
-            log['nmi'].append(nmi)
-
         # skig gram with negative sampling
         pred_pos = torch.sum(substruct_rep*context_rep, dim=1)
         pred_neg = torch.sum(substruct_rep*negative_rep, dim=1)
@@ -63,13 +49,30 @@ def train(epoch, model_substruct, model_context, data, optimizer_substruct, opti
         optimizer_substruct.step()
         optimizer_context.step()
 
+        # logging and debug
+        log['loss'].append(loss.cuda().cpu().detach().numpy().copy())
+
+        if(epoch % 10 == 0 and c_i == 0):  
+            Zn_np = representations.cuda().cpu().detach().numpy().copy()
+            label = data.y.cuda().cpu().detach().numpy().copy()
+            plot_Zn(
+                Zn_np, label, path_save='./data/experiment/test/Zn_skipgram_epoch{}'.format(epoch))
+
+            n_class = torch.max(data.y).cuda(
+            ).cpu().detach().numpy().copy() + 1
+            k_means = KMeans(n_class, n_init=10, random_state=0, tol=0.0000001)
+            k_means.fit(Zn_np)
+            nmi = clus.adjusted_mutual_info_score(
+                k_means.labels_, data.y.cuda().cpu().detach().numpy().copy(), "arithmetic")
+            log['nmi'].append(nmi)
+
     return float(loss.detach().cpu().item())
 
 
 parser = argparse.ArgumentParser(
     description='PyTorch implementation of pre-training of GNN')
 parser.add_argument('--dataset', type=str, default='Cora')
-parser.add_argument('--n_class', type=int, default=2,
+parser.add_argument('--n_class', type=int, default=7,
                     help='number of class')
 parser.add_argument('--lr', type=float, default=0.001,
                     help='learning rate (default: 0.001)')
@@ -79,9 +82,9 @@ parser.add_argument('--epochs', type=int, default=100,
                     help='number of epochs to train (defalt: 100)')
 parser.add_argument('--border', type=int, default=1,
                     help='boderline between substract and context graph (default: 3).')
-parser.add_argument('--hidden1', type=list, default=[1024, 512, 256],
+parser.add_argument('--hidden1', type=list, default=[128, 64, 32],
                     help='number of hidden layer of GCN for substract representation')
-parser.add_argument('--hidden2', type=list, default=[512, 256],
+parser.add_argument('--hidden2', type=list, default=[64, 32],
                     help='number of hidden layer of GCN for context representation')
 args = parser.parse_args()
 
@@ -115,9 +118,14 @@ for epoch in tqdm(range(args.epochs)):
 torch.save(model_substruct.state_dict(), 'pretrained_gcn')
 
 # log
-fig = plt.figure(figsize=(17, 17))
-plt.plot(log['nmi'], label='nmi')
-plt.legend(loc='upper right', prop={'size': 12})
-plt.tick_params(axis='x', labelsize='12')
-plt.tick_params(axis='y', labelsize='12')
+fig = plt.figure(figsize=(35, 35))
+ax1, ax2 = fig.add_subplot(2, 1, 1), fig.add_subplot(2, 1, 2)
+ax1.plot(log['loss'], label='loss')
+ax1.legend(loc='upper right', prop={'size': 25})
+ax1.tick_params(axis='x', labelsize='23')
+ax1.tick_params(axis='y', labelsize='23')
+ax2.plot(log['nmi'], label='nmi')
+ax2.legend(loc='upper left', prop={'size': 25})
+ax2.tick_params(axis='x', labelsize='23')
+ax2.tick_params(axis='y', labelsize='23')
 plt.savefig('./data/experiment/test/result.png')
