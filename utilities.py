@@ -13,7 +13,7 @@ from torch_geometric import utils
 from scipy.sparse.linalg import eigsh
 
 
-from debug import plot_G_contextG_pair
+# from debug import plot_G_contextG_pair
 
 class GraphAugmenter:
     def __init__(self, num_steps, num_edges_per_node_BA, 
@@ -81,6 +81,25 @@ def sample_from_neighbors(data, i, sample_size):
     sample_size = min(len(neighbors_list), sample_size)
     return random.sample(neighbors_list, sample_size)
 
+
+class ExtractAttribute:
+    def __init__(self, tree_depth=5):
+        self.tree_depth = tree_depth
+
+    def __call__(self, data):
+        pseudo_label = SpectralClustering(data)
+
+        clf = DecisionTreeClassifier(max_depth=self.tree_depth)
+        clf = clf.fit(data.x, pseudo_label)
+        f_importance = clf.feature_importances_
+        hit_idxes = [idx for idx, val in enumerate(
+            f_importance) if val > 0]
+
+        data.x = data.x[:, hit_idxes]
+
+        return data
+
+
 class Mask:
     def __init__(self, mask_rate_node, mask_rate_edge):
         self.mask_rate_node = mask_rate_node
@@ -114,7 +133,6 @@ class Mask:
             data.x = data.x[:, hit_idxes]
 
             # mask the original node feature of the masked node
-            n_attribute = data.x.size()[1]
             for idx in masked_node_idxes:
                 data.x[idx] = torch.zeros(len(hit_idxes), dtype=torch.float)
 

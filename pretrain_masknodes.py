@@ -11,7 +11,7 @@ from sklearn.cluster import KMeans
 from sklearn.metrics.cluster import normalized_mutual_info_score
 import itertools
 
-from utilities import Mask, GraphAugmenter, nmi
+from utilities import Mask, GraphAugmenter, ExtractAttribute, nmi
 from models import GCN
 from layers import NeuralTensorNetwork
 from debug import plot_Zn
@@ -94,25 +94,24 @@ parser.add_argument('--hidden', type=list, default=[128, 64, 32, 16],
 args = parser.parse_args()
 
 # load and transform dataset
-os.makedirs('./data/experiment/test')
+os.makedirs('./data/experiment/test_')
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 if(args.dataset == 'KarateClub'):
     dataset = KarateClub(transform=Mask(
         args.mask_rate_node, args.mask_rate_edge))
 else:
     dataset = Planetoid(root='./data/experiment/', name=args.dataset,
+                        pre_transform=ExtractAttribute(tree_depth=5),
                         transform=Mask(args.mask_rate_node, args.mask_rate_edge))
 data = dataset[0].to(device)
 
 # set up GCN model and linear model to predict node features
 n_attributes = data.x.shape[1]
-hit_idxes_size = data.x.size()[1]
-print('hit_idx_size : {}'.format(hit_idxes_size))
 model = GCN(n_attributes, args.hidden).to(device)
 
 dim_emb = args.hidden[-1]
 # below linear model predict if edge between nodes is exist or not
-linear_pred_nodes = torch.nn.Linear(dim_emb, hit_idxes_size).to(device)
+linear_pred_nodes = torch.nn.Linear(dim_emb, n_attributes).to(device)
 linear_pred_edges = NeuralTensorNetwork(dim_emb, 1).to(device)
 
 # set up optimizer for the GNNs
