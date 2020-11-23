@@ -56,14 +56,14 @@ def train(epoch, model_substruct, model_context, data, optimizer_substruct, opti
             Zn_np = representations.cuda().cpu().detach().numpy().copy()
             label = data.y.cuda().cpu().detach().numpy().copy()
             plot_Zn(
-                Zn_np, label, path_save='./data/experiment/test/Zn_skipgram_epoch{}'.format(epoch))
+                Zn_np, label, path_save='./data/experiment/test2/Zn_skipgram_epoch{}'.format(epoch))
 
             n_class = torch.max(data.y).cuda(
             ).cpu().detach().numpy().copy() + 1
             k_means = KMeans(n_class, n_init=10, random_state=0, tol=0.0000001)
             k_means.fit(Zn_np)
             nmi = clus.adjusted_mutual_info_score(
-                k_means.labels_, data.y.cuda().cpu().detach().numpy().copy(), "arithmetic")
+                    k_means.labels_, label, "arithmetic")
             log['nmi'].append(nmi)
 
     return float(loss.detach().cpu().item())
@@ -82,14 +82,10 @@ parser.add_argument('--epochs', type=int, default=100,
                     help='number of epochs to train (defalt: 100)')
 parser.add_argument('--border', type=int, default=1,
                     help='boderline between substract and context graph (default: 3).')
-parser.add_argument('--hidden1', type=list, default=[128, 64, 32],
-                    help='number of hidden layer of GCN for substract representation')
-parser.add_argument('--hidden2', type=list, default=[64, 32],
-                    help='number of hidden layer of GCN for context representation')
 args = parser.parse_args()
 
 # load and transform dataset
-os.makedirs('./data/experiment/test')
+os.makedirs('./data/experiment/test2')
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 if(args.dataset == 'KarateClub'):
     dataset = KarateClub(transform=ExtractSubstructureContextPair(
@@ -98,11 +94,15 @@ else:
     dataset = Planetoid(root='./data/experiment/', name=args.dataset,
                         transform=ExtractSubstructureContextPair(args.n_class, args.border, device))
 data = dataset[0].to(device)
+print(data)
 
 # set up GCN model
 n_attributes = data.x.shape[1]
-model_substruct = GCN(n_attributes, args.hidden1).to(device)
-model_context = GCN(n_attributes, args.hidden2).to(device)
+print('hit index size : {}'.format(n_attributes))
+hidden1 = [n_attributes for i in range(3)]
+hidden2 = [n_attributes for i in range(2)]
+model_substruct = GCN(n_attributes, hidden1).to(device)
+model_context = GCN(n_attributes, hidden2).to(device)
 
 # set up optimizer for the two GNNs
 optimizer_substruct = optim.Adam(
@@ -128,4 +128,4 @@ ax2.plot(log['nmi'], label='nmi')
 ax2.legend(loc='upper left', prop={'size': 25})
 ax2.tick_params(axis='x', labelsize='23')
 ax2.tick_params(axis='y', labelsize='23')
-plt.savefig('./data/experiment/test/result.png')
+plt.savefig('./data/experiment/test2/result.png')

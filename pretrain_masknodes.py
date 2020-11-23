@@ -98,10 +98,9 @@ os.makedirs('./data/experiment/test_')
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 if(args.dataset == 'KarateClub'):
     dataset = KarateClub(transform=Mask(
-        args.mask_rate_node, args.mask_rate_edge))
+                args.mask_rate_node, args.mask_rate_edge))
 else:
     dataset = Planetoid(root='./data/experiment/', name=args.dataset,
-                        pre_transform=ExtractAttribute(tree_depth=5),
                         transform=Mask(args.mask_rate_node, args.mask_rate_edge))
 data = dataset[0].to(device)
 
