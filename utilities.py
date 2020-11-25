@@ -1,9 +1,11 @@
+import time
 import random
 import numpy as np
 import scipy.sparse as sp
 import torch
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.cluster import KMeans
+from sklearn.metrics.pairwise import cosine_similarity
 from skfuzzy.cluster import cmeans
 import sklearn.metrics.cluster as clus
 import itertools
@@ -11,62 +13,70 @@ import networkx as nx
 from torch_geometric.data import Data
 from torch_geometric import utils
 from scipy.sparse.linalg import eigsh
+from scipy import linalg
 
 from debug import plot_G_contextG_pair
 
-def augument_graph(data, num_steps, num_edges_per_node_BA, 
-                    num_edges_per_node_TF):
-                    
-    num_nodes = data.x.size()[0]
-    num_dims = data.x.size()[1]
-    degree = [0 for w in range(num_nodes)]
-    for i,j in data.edge_index.T:
-            degree[i] += 1
-            degree[j] += 1
 
-    for step in range(num_steps):
+class AugumentGraph:
 
-        # add new node
-        new_node_attr = torch.zeros(1, num_dims, dtype=torch.float)
-        data.y = torch.cat((data.y, torch.LongTensor([7])), 
-                            dim=0) # label 7 means augmented vertices
-        num_nodes += 1
-        new_node_id = num_nodes-1
-        neighbor_node_idxes_of_newnode = []
+    def __init__(self, num_steps, num_edges_BA, num_edges_TF):
+        self.num_steps = num_steps
+        self.num_edges_BA = num_edges_BA
+        self.num_edges_TF = num_edges_TF
+    
+    def __call__(self, data):
+        num_nodes = data.x.size()[0]
+        num_dims = data.x.size()[1]
+        degree = [0 for w in range(num_nodes)]
 
-        # select nodes which are connected to new node (BA algorithm)
-        degree_buff = degree.copy()
-        w_list = []
-        for tri in range(num_edges_per_node_BA):
-            w = random.choices(range(num_nodes-1), weights=degree_buff)[0]
-            w_list.append(w)
-            degree_buff[w] = 0
-        degree.append(0) # append new node's degree
-        
-        for w in w_list:
+        for i,j in data.edge_index.T:
+                degree[i] += 1
+                degree[j] += 1
 
-            # Barabasi Albert (BA) Algorithm
-            data.edge_index = torch.cat((data.edge_index, torch.tensor([[new_node_id], [w]])), dim=1)
-            degree[w] += 1
-            degree[new_node_id] += 1
-            neighbor_node_idxes_of_newnode.append(w)
+        for step in range(self.num_steps):
 
-            # Triad Formation (TF) Algorithm   
-            u_list = sample_from_neighbors(data, w, num_edges_per_node_TF)
-            for u in u_list:
-                data.edge_index = torch.cat((data.edge_index, torch.tensor([[new_node_id], [u]])), dim=1)
-                degree[u] += 1
+            # add new node
+            new_node_attr = torch.zeros(1, num_dims, dtype=torch.float)
+            data.y = torch.cat((data.y, torch.LongTensor([7])), 
+                                dim=0) # label 7 means augmented vertices
+            num_nodes += 1
+            new_node_id = num_nodes-1
+            neighbor_node_idxes_of_newnode = []
+
+            # select nodes which are connected to new node (BA algorithm)
+            degree_buff = degree.copy()
+            w_list = []
+            for tri in range(self.num_edges_BA):
+                w = random.choices(range(num_nodes-1), weights=degree_buff)[0]
+                w_list.append(w)
+                degree_buff[w] = 0
+            degree.append(0) # append new node's degree
+
+            for w in w_list:
+
+                # Barabasi Albert (BA) Algorithm
+                data.edge_index = torch.cat((data.edge_index, torch.tensor([[new_node_id], [w]])), dim=1)
+                degree[w] += 1
                 degree[new_node_id] += 1
-                neighbor_node_idxes_of_newnode.append(u)
+                neighbor_node_idxes_of_newnode.append(w)
 
-        # edit new node's attribute based on neighbor nodes
-        for idx in neighbor_node_idxes_of_newnode:
-            new_node_attr = torch.cat((new_node_attr, data.x[idx].view(1, -1)), dim=0)
-        new_node_attr = torch.mean(new_node_attr, dim=0, keepdim=True)
-        new_node_attr = torch.round(new_node_attr)
-        data.x = torch.cat((data.x, new_node_attr), dim=0)
+                # Triad Formation (TF) Algorithm   
+                u_list = sample_from_neighbors(data, w, self.num_edges_TF)
+                for u in u_list:
+                    data.edge_index = torch.cat((data.edge_index, torch.tensor([[new_node_id], [u]])), dim=1)
+                    degree[u] += 1
+                    degree[new_node_id] += 1
+                    neighbor_node_idxes_of_newnode.append(u)
 
-    return data             
+            # edit new node's attribute based on neighbor nodes
+            for idx in neighbor_node_idxes_of_newnode:
+                new_node_attr = torch.cat((new_node_attr, data.x[idx].view(1, -1)), dim=0)
+            new_node_attr = torch.mean(new_node_attr, dim=0, keepdim=True)
+            new_node_attr = torch.round(new_node_attr)
+            data.x = torch.cat((data.x, new_node_attr), dim=0)
+
+        return data             
 
 def sample_from_neighbors(data, i, sample_size):
     A = utils.to_dense_adj(data.edge_index)[0].cpu().numpy()
@@ -75,19 +85,27 @@ def sample_from_neighbors(data, i, sample_size):
     return random.sample(neighbors_list, sample_size)
 
 
-def extract_attribute(data, pseudo_label, tree_depth):
-    clf = DecisionTreeClassifier(max_depth=tree_depth)
-    clf = clf.fit(data.x, pseudo_label)
-    f_importance = clf.feature_importances_
-    hit_idxes = [idx for idx, val in enumerate(
-        f_importance) if val > 0]
+class ExtractAttribute:
+    def __init__(self, num_clusters, tree_depth):
+        self.num_clusters = num_clusters
+        self.tree_depth = tree_depth
 
-    data.x = data.x[:, hit_idxes]
+    def __call__(self, data):
+        pseudo_label = spectral_clustering(data, self.num_clusters)
 
-    return data
+        clf = DecisionTreeClassifier(max_depth=self.tree_depth)
+        clf = clf.fit(data.x, pseudo_label)
+        f_importance = clf.feature_importances_
+        hit_idxes = [idx for idx, val in enumerate(
+            f_importance) if val > 0]
+
+        data.x = data.x[:, hit_idxes]
+
+        print('\tDone process : extract attribute')
+        return data
 
 
-class Mask:
+class MaskGraph:
     def __init__(self, mask_rate_node, mask_rate_edge):
         self.mask_rate_node = mask_rate_node
         self.mask_rate_edge = mask_rate_edge
@@ -96,20 +114,47 @@ class Mask:
 
         num_nodes = data.x.size()[0]
 
-        # get pseudo label and hit idexes
-        data = extract_attribute(data, 8)
-
         # sample some distinct nodes to be masked
         if(self.mask_rate_node > 0.):
+            n_attribute = data.x.size()[1]
             sample_size = int(num_nodes * self.mask_rate_node)
             masked_node_idxes = random.sample(range(num_nodes), sample_size)
 
             masked_node_labels_list = []
             for idx in masked_node_idxes:
                 masked_node_labels_list.append(
-                    data.x[idx][hit_idxes].view(1, -1))
+                    data.x[idx].view(1, -1))
+                data.x[idx] = torch.zeros(n_attribute, dtype=torch.float)
             data.masked_node_label = torch.cat(masked_node_labels_list, dim=0)
             data.masked_node_idxes = torch.tensor(masked_node_idxes)
+
+        # sample some distinct edges to be masked, based on mask rate
+        if(self.mask_rate_edge > 0.):
+            num_edges = int(data.edge_index.size()[1])
+            sample_size = int(num_edges * self.mask_rate_edge)
+            ratio_positive_negative = 1
+
+            pair_list = set(itertools.combinations(range(num_nodes), 2))
+            edge_pair_list = set([(u, v)
+                                  for u, v in data.edge_index.numpy().T])
+            noedge_pair_list = pair_list - edge_pair_list
+
+            masked1 = random.sample(edge_pair_list, sample_size)
+            masked2 = random.sample(noedge_pair_list, sample_size*ratio_positive_negative)
+            masked_edge_idxes = list(masked1) + list(masked2)
+            data.mask_edge_idxes = torch.tensor(
+                [[u, v] for u, v in masked_edge_idxes])
+            data.mask_edge_label = torch.cat([torch.ones(sample_size, dtype=torch.float),
+                                        torch.zeros(sample_size*ratio_positive_negative, 
+                                        dtype=torch.float)], dim=0)
+
+            A = utils.to_dense_adj(data.edge_index)[0]
+            for (u, v) in masked1:
+                A[u][v] = 0
+                A[v][u] = 0
+            data.edge_index = utils.dense_to_sparse(A)[0]
+        
+        print('\tDone process : MaskGraph')
 
         return data
 
@@ -124,10 +169,10 @@ class ExtractSubstructureContextPair:
 
         # extract useful attributes for clustering (hit idx) of original attribute
         pseudo_label = spectral_clustering(data, self.c)
-        data = extract_attribute(data, pseudo_label, 8)
+        data = extract_attribute(data, pseudo_label, 6)
 
         # augument original graph based on BA and TF algorithm
-        # data = augument_graph(data, 2300, 1, 1)
+        data = augument_graph(data, 2300, 1, 10)
 
         G = graph_data_obj_to_nx(data)
 
@@ -291,6 +336,35 @@ def fuzzy_cmeans(data, n_of_clusters, *, m=1.07):
     return result
 
 
+def spectral_clustering(data, n_class):
+    obj_size = data.x.size()[0]
+    features = data.x.cpu().detach().numpy().copy()
+
+    S1 = cosine_similarity(features)
+    S1 = makeKnn(S1, 80)
+    normalized(S1)
+
+    S2 = utils.to_dense_adj(data.edge_index)[0]
+    S2 = S2.cpu().detach().numpy().copy()
+    normalized(S2)
+
+    S = (S1+S2)/2.
+    S = (S+S.T)/2.
+
+    D = np.diag(np.sum(S,axis=0))
+    Ls = D-S
+    Ls_norm = np.dot(np.sqrt(linalg.inv(D)),np.dot(Ls,np.sqrt(linalg.inv(D))))
+
+    eigen_val, eigen_vec = eigsh(Ls_norm, n_class, which="SM")
+    k_means = KMeans(n_clusters=n_class, n_init=10, tol=0.0000001)
+    k_means.fit(eigen_vec)
+    label = data.y.cuda().cpu().detach().numpy().copy()
+
+    nmi = clus.normalized_mutual_info_score(label, k_means.labels_)
+    print('\tnmi of pseudo-label : {}'.format(nmi))
+
+    return k_means.labels_
+
 def normalized(mat):
     for i in range(len(mat)):
         sum_ = np.sum(mat[i])
@@ -300,35 +374,6 @@ def normalized(mat):
             else:
                 mat[i][j] = mat[i][j] / sum_
 
-
-def makeLaplacian(mat):
-    L = np.zeros((len(mat), len(mat[0])))
-    for d in range(len(mat)):
-        for i in range(len(mat)):
-            L[d][d] += (mat[i][d] + mat[d][i])
-        L[d][d] = L[d][d]/2.0
-    for i in range(len(L)):
-        for j in range(len(L[0])):
-            L[i][j] -= (mat[i][j]+mat[j][i])/2.
-    return L
-
-
-def makeNormLaplacian(mat):
-    L = makeLaplacian(mat)
-    d = np.zeros(len(mat))
-    for i in range(len(mat)):
-        for j in range(len(mat[i])):
-            d[i] += (mat[i][j] + mat[j][i])
-        d[i] = d[i] / 2.
-    for i in range(len(L)):
-        for j in range(len(L[i])):
-            if(d[i] == 0 or d[j] == 0):
-                L[i][j] = 0.
-            else:
-                L[i][j] = (1./np.sqrt(d[i])) * L[i][j] * (1./np.sqrt(d[j]))
-    return L
-
-
 def makeKnn(mat, k):
     knnmat = np.zeros((len(mat), len(mat[0])))
     for i in range(len(mat)):
@@ -337,129 +382,17 @@ def makeKnn(mat, k):
             knnmat[i][arg[top]] = mat[i][arg[top]]
     return knnmat
 
-
-def spectral_clustering(data, n_class):
-    obj_size = data.x.size()[0]
-    features = data.x.cpu().detach().numpy().copy()
-
-    S1 = np.zeros((obj_size, obj_size))
-    for i in range(obj_size):
-        for j in range(i+1, obj_size):
-            dot = np.dot(features[i], features[j])
-            norm = (np.linalg.norm(features[i]) * np.linalg.norm(features[j]))
-            if(norm == 0.):
-                S1[i][j] = 0.
-            else:
-                S1[i][j] = dot / norm
-            S1[j][i] = S1[i][j]
-    for d in range(len(S1)):
-        S1[d][d] = 0.
-
-    S1 = makeKnn(S1, 80)
-    normalized(S1)
-
-    S2 = utils.to_dense_adj(data.edge_index)[0]
-    S2 = S2.cpu().detach().numpy().copy()
-    normalized(S2)
-
-    S = (S1+S2)/2.
-
-    Ls = makeNormLaplacian(S)
-    eigen_val, eigen_vec = eigsh(Ls, n_class, which="SM")
-
-    k_means = KMeans(n_clusters=n_class, n_init=10, tol=0.0000001)
-    k_means.fit(eigen_vec)
-    label = data.y.cuda().cpu().detach().numpy().copy()
-
-    nmi = clus.normalized_mutual_info_score(label, k_means.labels_)
-    print('nmi of pseudo-label : {}'.format(nmi))
-
-    return k_means.labels_
-
-
-def encode_onehot(labels):
-    classes = set(labels)
-    classes_dict = {c: np.identity(len(classes))[i, :] for i, c in
-                    enumerate(classes)}
-    labels_onehot = np.array(list(map(classes_dict.get, labels)),
-                             dtype=np.int32)
-    return labels_onehot
-
-
-def load_data(path="D:/python/GCN/DeepGraphClustering/data/cora/", dataset="cora"):
-    """Load citation network dataset (cora only for now)"""
-    print('Loading {} dataset...'.format(dataset))
-
-    idx_features_labels = np.genfromtxt("{}{}.content".format(path, dataset),
-                                        dtype=np.dtype(str))
-    features = sp.csr_matrix(idx_features_labels[:, 1:-1], dtype=np.float32)
-    labels = encode_onehot(idx_features_labels[:, -1])
-
-    # build graph
-    idx = np.array(idx_features_labels[:, 0], dtype=np.int32)
-    idx_map = {j: i for i, j in enumerate(idx)}
-    edges_unordered = np.genfromtxt("{}{}.cites".format(path, dataset),
-                                    dtype=np.int32)
-    edges = np.array(list(map(idx_map.get, edges_unordered.flatten())),
-                     dtype=np.int32).reshape(edges_unordered.shape)
-    adj = sp.coo_matrix((np.ones(edges.shape[0]), (edges[:, 0], edges[:, 1])),
-                        shape=(labels.shape[0], labels.shape[0]),
-                        dtype=np.float32)
-
-    # build symmetric adjacency matrix
-    adj = adj + adj.T.multiply(adj.T > adj) - adj.multiply(adj.T > adj)
-    features = normalize(features)
-    adj = normalize(adj + sp.eye(adj.shape[0]))  # ここでA = A+I 更に D^-1*A までしてる
-
-    # sampling 3 clusters for fuzzy means visualization
-    labels = np.where(labels)[1]
-    features, adj = features.toarray(), adj.toarray()
-    idx, del_idx = [], []
-    for v_id, label_id in enumerate(labels):
-        if(label_id in [0, 2, 5]):
-            idx.append(v_id)
-        else:
-            del_idx.append(v_id)
-    dane_emb = np.loadtxt('./data/experiment/DANEemb.csv')
-    dane_emb = np.delete(dane_emb, del_idx, axis=0)
-    features = np.delete(features, del_idx, axis=0)
-    adj = np.delete(adj, del_idx, axis=0)
-    adj = np.delete(adj, del_idx, axis=1)
-    labels = np.delete(labels, del_idx, axis=0)
-    map_ = {0: 0, 2: 1, 5: 2}
-    labels = [relabeled for relabeled in map(lambda x:map_[x], labels)]
-
-    dane_emb = torch.FloatTensor(dane_emb)
-    features = torch.FloatTensor(features)
-    labels = torch.LongTensor(labels)
-    adj = torch.FloatTensor(adj)  # ここで各入力A, X, lをtensor型に変更
-
-    return adj, features, labels, dane_emb
-
-
-def normalize(mx):
-    """Row-normalize sparse matrix"""
-    rowsum = np.array(mx.sum(1))
-    r_inv = np.power(rowsum, -1).flatten()
-    r_inv[np.isinf(r_inv)] = 0.
-    r_mat_inv = sp.diags(r_inv)
-    mx = r_mat_inv.dot(mx)
-    return mx
-
-
 def accuracy(output, labels):
     preds = output.max(1)[1].type_as(labels)
     correct = preds.eq(labels).double()
     correct = correct.sum()
     return correct / len(labels)
 
-
 def nmi(output, labels):
     preds = output.max(1)[1].type_as(labels)
     preds = preds.cuda().cpu().detach().numpy().copy()
     labels = labels.cuda().cpu().detach().numpy().copy()
     return clus.adjusted_mutual_info_score(preds, labels, "arithmetic")
-
 
 def purity(output, labels):
     preds = output.max(1)[1].type_as(labels)
@@ -477,6 +410,14 @@ def purity(output, labels):
         sum += np.amax(table[k])
     return sum/usr_size
 
+
+def encode_onehot(labels):
+    classes = set(labels)
+    classes_dict = {c: np.identity(len(classes))[i, :] for i, c in
+                    enumerate(classes)}
+    labels_onehot = np.array(list(map(classes_dict.get, labels)),
+                             dtype=np.int32)
+    return labels_onehot
 
 def sparse_mx_to_torch_sparse_tensor(sparse_mx):
     """Convert a scipy sparse matrix to a torch sparse tensor."""

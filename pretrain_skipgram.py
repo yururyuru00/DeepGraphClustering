@@ -52,11 +52,11 @@ def train(epoch, model_substruct, model_context, data, optimizer_substruct, opti
         # logging and debug
         log['loss'].append(loss.cuda().cpu().detach().numpy().copy())
 
-        if(epoch % 10 == 0 and c_i == 0):  
-            Zn_np = representations.cuda().cpu().detach().numpy().copy()
-            label = data.y.cuda().cpu().detach().numpy().copy()
+        if(epoch % 99 == 0 and c_i == 0):  
+            Zn_np = representations[0:2708].cuda().cpu().detach().numpy().copy()
+            label = data.y[0:2708].cuda().cpu().detach().numpy().copy()
             plot_Zn(
-                Zn_np, label, path_save='./data/experiment/test2/Zn_skipgram_epoch{}'.format(epoch))
+                Zn_np, label, path_save='./data/experiment/test5/Zn_skipgram_epoch{}'.format(epoch))
 
             n_class = torch.max(data.y).cuda(
             ).cpu().detach().numpy().copy() + 1
@@ -85,7 +85,7 @@ parser.add_argument('--border', type=int, default=1,
 args = parser.parse_args()
 
 # load and transform dataset
-os.makedirs('./data/experiment/test2')
+os.makedirs('./data/experiment/test5')
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 if(args.dataset == 'KarateClub'):
     dataset = KarateClub(transform=ExtractSubstructureContextPair(
@@ -128,4 +128,4 @@ ax2.plot(log['nmi'], label='nmi')
 ax2.legend(loc='upper left', prop={'size': 25})
 ax2.tick_params(axis='x', labelsize='23')
 ax2.tick_params(axis='y', labelsize='23')
-plt.savefig('./data/experiment/test2/result.png')
+plt.savefig('./data/experiment/test5/result.png')
