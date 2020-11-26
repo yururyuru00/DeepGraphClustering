@@ -5,13 +5,14 @@ import matplotlib.pyplot as plt
 import torch
 from torch_geometric.datasets import KarateClub
 from torch_geometric.datasets import Planetoid
+import torchvision.transforms as transforms
 import torch.optim as optim
 import os
 from sklearn.cluster import KMeans
 from sklearn.metrics.cluster import normalized_mutual_info_score
 import itertools
 
-from utilities import Mask, GraphAugmenter, ExtractAttribute, nmi
+from utilities import ExtractAttribute, MaskGraph, nmi
 from models import GCN
 from layers import NeuralTensorNetwork
 from debug import plot_Zn
@@ -37,7 +38,6 @@ def train(args, epoch, data, models, optimizers, log):
 
     # mask the edge representation
     if(args.mask_rate_edge > 0.):
-        num_nodes = data.x.size()[0]
         edge_preds = []
         for u, v in data.mask_edge_idxes:
             edge_pred = linear_pred_edges(node_rep[u], node_rep[v])
@@ -58,12 +58,12 @@ def train(args, epoch, data, models, optimizers, log):
     # log and debug
     log['loss'].append(loss)
 
+
+
     if(epoch % 10 == 0):
         Zn_np = node_rep.cuda().cpu().detach().numpy().copy()
-        label = data.y.cuda().cpu().detach().numpy().copy()
-        plot_Zn(
-            Zn_np, label, path_save='./data/experiment/test/Zn_masknode_epoch{}'.format(epoch))
-        
+        np.save('./data/experiment/test_not_fixed_sample/Zn_epoch{}'.format(epoch), Zn_np)
+
         n_class = torch.max(data.y).cuda().cpu().detach().numpy().copy() + 1
         k_means = KMeans(n_class, n_init=10, random_state=0, tol=0.0000001)
         k_means.fit(Zn_np)
@@ -89,29 +89,27 @@ parser.add_argument('--mask_rate_node', type=float, default=0.15,
                     help='mask nodes ratio (default: 0.15)')
 parser.add_argument('--mask_rate_edge', type=float, default=0.15,
                     help='mask edges ratio (default: 0.15)')
-parser.add_argument('--hidden', type=list, default=[128, 64, 32, 16],
-                    help='number of hidden layer of GCN for substract representation')
 args = parser.parse_args()
 
 # load and transform dataset
-os.makedirs('./data/experiment/test_')
+os.makedirs('./data/experiment/test_not_fixed_sample')
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-if(args.dataset == 'KarateClub'):
-    dataset = KarateClub(transform=Mask(
-                args.mask_rate_node, args.mask_rate_edge))
-else:
-    dataset = Planetoid(root='./data/experiment/', name=args.dataset,
-                        transform=Mask(args.mask_rate_node, args.mask_rate_edge))
+transforms = transforms.Compose([MaskGraph(args.mask_rate_node, args.mask_rate_edge)])
+dataset = Planetoid(root='./data/experiment/', name=args.dataset,
+                    pre_transform=ExtractAttribute(args.n_class, 5),
+                    transform=transforms)
 data = dataset[0].to(device)
+print(data)
 
 # set up GCN model and linear model to predict node features
 n_attributes = data.x.shape[1]
-model = GCN(n_attributes, args.hidden).to(device)
+num_of_hidden_layers = [128, 64, 32, 16]
+model = GCN(n_attributes, num_of_hidden_layers).to(device)
 
-dim_emb = args.hidden[-1]
 # below linear model predict if edge between nodes is exist or not
-linear_pred_nodes = torch.nn.Linear(dim_emb, n_attributes).to(device)
-linear_pred_edges = NeuralTensorNetwork(dim_emb, 1).to(device)
+dim_embedding = num_of_hidden_layers[-1]
+linear_pred_nodes = torch.nn.Linear(dim_embedding, n_attributes).to(device)
+linear_pred_edges = NeuralTensorNetwork(dim_embedding, 1).to(device)
 
 # set up optimizer for the GNNs
 optimizer = optim.Adam(
@@ -126,7 +124,7 @@ optimizers = [optimizer, optimizer_linear_nodes, optimizer_linear_edges]
 
 # train
 log = {'loss': [], 'nmi': []}
-for epoch in tqdm(range(args.epochs)):
+for epoch in tqdm(range(args.epochs+1)):
     loss = train(args, epoch, data, models, optimizers, log)
 torch.save(model.state_dict(), 'pretrained_gcn')
 
@@ -140,5 +138,5 @@ ax2.plot(log['nmi'], label='nmi')
 ax2.legend(loc='upper left', prop={'size': 25})
 ax2.tick_params(axis='x', labelsize='23')
 ax2.tick_params(axis='y', labelsize='23')
-plt.savefig('./data/experiment/test/result.png')
+plt.savefig('./data/experiment/test_not_fixed_sample/result.png')
 

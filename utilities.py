@@ -337,7 +337,6 @@ def fuzzy_cmeans(data, n_of_clusters, *, m=1.07):
 
 
 def spectral_clustering(data, n_class):
-    obj_size = data.x.size()[0]
     features = data.x.cpu().detach().numpy().copy()
 
     S1 = cosine_similarity(features)
