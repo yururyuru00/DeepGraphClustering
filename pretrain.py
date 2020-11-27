@@ -1,110 +1,89 @@
-from __future__ import division
-from __future__ import print_function
-
 import math
 import sys
 import time
 import argparse
 import numpy as np
 import matplotlib.pyplot as plt
+from tqdm import tqdm
+from sklearn.cluster import KMeans
+from sklearn.metrics.cluster import normalized_mutual_info_score
 
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
+from torch_geometric.datasets import Planetoid
 
-from utilities import load_data, accuracy, nmi, purity, kmeans
+from utilities import accuracy, nmi, purity
 from models import GCN
-from layers import FrobeniusNorm, purity_loss
+from layers import FrobeniusNorm
 
-def train(epoch, log):
-    t = time.time()
+
+loss_f = FrobeniusNorm()
+
+def train(args, epoch, data, model, optimizer, log):
     model.train()
+    node_emb = model(data.x, data.edge_index)
+    loss = loss_f(node_emb, dane_emb)
+
     optimizer.zero_grad()
-    output = model(features, adj)
-    loss = loss_f(output, dane_emb)
     loss.backward()
     optimizer.step()
 
+    # logging
     log['loss'].append(loss.cuda().cpu().detach().numpy().copy())
-
-    # log and debug
-    log['loss'].append(loss)
-
     if(epoch % 10 == 0):
-        Zn_np = node_rep.cuda().cpu().detach().numpy().copy()
-        label = data.y.cuda().cpu().detach().numpy().copy()
-        plot_Zn(
-            Zn_np, label, path_save='./data/experiment/test/Zn_masknode_epoch{}'.format(epoch))
+        Zn_np = node_emb.cuda().cpu().detach().numpy().copy()
+        np.save('./data/experiment/test/Zn_epoch{}'.format(epoch), Zn_np)
         
-        n_class = torch.max(data.y).cuda().cpu().detach().numpy().copy() + 1
-        k_means = KMeans(n_class, n_init=10, random_state=0, tol=0.0000001)
+        k_means = KMeans(args.n_class, n_init=10, random_state=0, tol=0.0000001)
         k_means.fit(Zn_np)
-        nmi = normalized_mutual_info_score(
-              data.y.cuda().cpu().detach().numpy().copy(), k_means.labels_)
+
+        label = data.y.cuda().cpu().detach().numpy().copy()
+        nmi = normalized_mutual_info_score(label, k_means.labels_)
         log['nmi'].append(nmi)
+
 
 # settingargs check
 parser = argparse.ArgumentParser()
-parser.add_argument('--no-cuda', action='store_true', default=False,
-                    help='Disables CUDA training.')
-parser.add_argument('--fastmode', action='store_true', default=False,
-                    help='Validate during training pass.')
+parser.add_argument('--dataset', type=str, default='Cora', 
+                    help='dataset of {Cora, Citeseer, Pubmed} (default: Cora)')
+parser.add_argument('--n_class', type=int, default=7,
+                    help='number of class (default: 7)')
 parser.add_argument('--seed', type=int, default=1000, help='Random seed.')
-parser.add_argument('--epochs', type=int, default=100,
-                    help='Number of epochs to train.')
 parser.add_argument('--lr', type=float, default=0.01,
                     help='Initial learning rate.')
 parser.add_argument('--weight_decay', type=float, default=5e-4,
                     help='Weight decay (L2 loss on parameters).')
-parser.add_argument('--hidden', type=list, default=[512, 200],
-                    help='Number of hidden units.')
 parser.add_argument('--dropout', type=float, default=0.5,
                     help='Dropout rate (1 - keep probability).')
-
+parser.add_argument('--epochs', type=int, default=100,
+                    help='Number of epochs to train.')
+parser.add_argument('--hidden', type=list, default=[512, 200],
+                    help='Number of hidden units.')
+parser.add_argument('--hidden', type=int, nargs='+', default=[512, 200],
+                    help='number of hidden layer of GCN')
 args = parser.parse_args()
-args.cuda = not args.no_cuda and torch.cuda.is_available()
-np.random.seed(args.seed)
-torch.manual_seed(args.seed)
-if args.cuda:
-    torch.cuda.manual_seed(args.seed)
 
 # Load data
-adj, features, _, idx_train = load_data()  # pretrainではラベルは使わない
+os.makedirs('./data/experiment/test')
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+dataset = Planetoid(root='./data/experiment/', name=args.dataset)
+data = dataset[0].to(device)
 dane_emb = np.loadtxt('./data/experiment/DANEemb.csv')
+dane_emb = torch.FloatTensor(dane_emb).to(device)
 
 # Model and optimizer
-model = GCN(nfeat=features.shape[1], nhid=args.hidden)
-loss_f = FrobeniusNorm()
+n_attributes = data.x.shape[1]
+model = GCN(n_attributes, args.hidden).to(device)
 optimizer = optim.Adam(model.parameters(),
-                       lr=args.lr, weight_decay=args.weight_decay)  # lrが学習係数
-
-if args.cuda:  # cpuかgpuどちらのtensorを使うかの処理
-    model.cuda()
-    features = features.cuda()
-    adj = adj.cuda()
-    dane_emb = torch.FloatTensor(dane_emb).cuda()
-    idx_train = idx_train.cuda()
-
-
-# untrained Zn log
-model.train()
-output = model(features, adj)
-np.savetxt('./data/experiment/Zn_untrainedGCN.csv',
-           output.cuda().cpu().detach().numpy().copy())
+                       lr=args.lr, weight_decay=args.weight_decay)
 
 # Train and Save model
-t_total = time.time()
 log = {'loss': [], 'nmi': []}
-for epoch in range(args.epochs+1):
-    train(epoch, log)
-print("Optimization Finished!")
-torch.save(model.state_dict(), 'model_gcn')
+for epoch in tqdm(range(args.epochs+1)):
+    train(args, epoch, data, model, optimizer, log)
+torch.save(model.state_dict(), 'pretrained_gcn_reconstruct')
 
-# trained Zn log
-model.train()
-output = model(features, adj)
-np.savetxt('./data/experiment/Zn_trainedGCN.csv',
-           output.cuda().cpu().detach().numpy().copy())
 
 # plot log
 fig = plt.figure(figsize=(35, 35))
@@ -118,3 +97,7 @@ ax2.legend(loc='upper left', prop={'size': 25})
 ax2.tick_params(axis='x', labelsize='23')
 ax2.tick_params(axis='y', labelsize='23')
 plt.savefig('./data/experiment/test/result.png')
+
+with open('.data/experiment/test/log.txt', 'w') as w:
+    for arg in vars(args):
+        w.write('{}: {}\n'.format(arg, getattr(args, arg)))

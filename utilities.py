@@ -91,6 +91,9 @@ class ExtractAttribute:
         self.tree_depth = tree_depth
 
     def __call__(self, data):
+        if(self.tree_depth==-1):
+            return data
+
         pseudo_label = spectral_clustering(data, self.num_clusters)
 
         clf = DecisionTreeClassifier(max_depth=self.tree_depth)
@@ -113,30 +116,32 @@ class MaskGraph:
     def __call__(self, data):
 
         num_nodes = data.x.size()[0]
+        data.masked_x = data.x.clone()
+        data.masked_edge_index = data.edge_index.clone()
 
         # sample some distinct nodes to be masked
         if(self.mask_rate_node > 0.):
-            n_attribute = data.x.size()[1]
+            n_attribute = data.masked_x.size()[1]
             sample_size = int(num_nodes * self.mask_rate_node)
             masked_node_idxes = random.sample(range(num_nodes), sample_size)
 
             masked_node_labels_list = []
             for idx in masked_node_idxes:
                 masked_node_labels_list.append(
-                    data.x[idx].view(1, -1))
-                data.x[idx] = torch.zeros(n_attribute, dtype=torch.float)
+                    data.masked_x[idx].clone().view(1, -1))
+                data.masked_x[idx] = torch.zeros(n_attribute, dtype=torch.float)
             data.masked_node_label = torch.cat(masked_node_labels_list, dim=0)
             data.masked_node_idxes = torch.tensor(masked_node_idxes)
 
         # sample some distinct edges to be masked, based on mask rate
         if(self.mask_rate_edge > 0.):
-            num_edges = int(data.edge_index.size()[1])
+            num_edges = int(data.masked_edge_index.size()[1])
             sample_size = int(num_edges * self.mask_rate_edge)
             ratio_positive_negative = 1
 
             pair_list = set(itertools.combinations(range(num_nodes), 2))
             edge_pair_list = set([(u, v)
-                                  for u, v in data.edge_index.numpy().T])
+                                  for u, v in data.masked_edge_index.numpy().T])
             noedge_pair_list = pair_list - edge_pair_list
 
             masked1 = random.sample(edge_pair_list, sample_size)
@@ -148,14 +153,13 @@ class MaskGraph:
                                         torch.zeros(sample_size*ratio_positive_negative, 
                                         dtype=torch.float)], dim=0)
 
-            A = utils.to_dense_adj(data.edge_index)[0]
+            A = utils.to_dense_adj(data.masked_edge_index)[0]
             for (u, v) in masked1:
                 A[u][v] = 0
                 A[v][u] = 0
-            data.edge_index = utils.dense_to_sparse(A)[0]
+            data.masked_edge_index = utils.dense_to_sparse(A)[0]
         
-        print('\tDone process : MaskGraph')
-
+        print('\tDone process : mask graph')
         return data
 
 
