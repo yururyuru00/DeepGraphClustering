@@ -80,8 +80,8 @@ def main():
                         help='learning rate (default: 0.001)')
     parser.add_argument('--decay', type=float, default=5e-4,
                         help='weight decay (default: 5e-4)')
-    parser.add_argument('--epochs', type=int, default=100,
-                        help='number of epochs to train (defalt: 100)')
+    parser.add_argument('--epochs', type=int, default=500,
+                        help='number of epochs to train (defalt: 500)')
     parser.add_argument('--hidden1', type=int, nargs='+', default=[128, 64, 32],
                         help='number of hidden layer of substruct-GCN (default: 128 64 32)')
     parser.add_argument('--hidden2', type=int, nargs='+', default=[128, 32],
@@ -121,7 +121,8 @@ def main():
     log = {'loss': [], 'nmi': []}
     for epoch in tqdm(range(args.epochs)):
         train(args, epoch, data, models, optimizers, log)
-    torch.save(model_substruct.state_dict(), 'pretrained_gcn')
+    torch.save(model.state_dict(), './data/experiment/{}/pretrained_gcn'
+                .format(args.args.save_dir))
 
     # log
     fig = plt.figure(figsize=(35, 35))

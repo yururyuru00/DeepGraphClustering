@@ -84,6 +84,39 @@ def sample_from_neighbors(data, i, sample_size):
     sample_size = min(len(neighbors_list), sample_size)
     return random.sample(neighbors_list, sample_size)
 
+class MakePseudoLabel:
+    def __init__(self, num_clusters):
+        self.num_clusters = num_clusters
+
+    def __call__(self, data):
+
+        X = data.x.cpu().detach().numpy().copy()
+
+        S1 = cosine_similarity(X)
+        S1 = makeKnn(S1, 80)
+        normalized(S1)
+
+        S2 = utils.to_dense_adj(data.edge_index)[0]
+        S2 = S2.cpu().detach().numpy().copy()
+        normalized(S2)
+
+        S = (S1+S2)/2.
+        S = (S+S.T)/2.
+
+        D = np.diag(np.sum(S,axis=0))
+        Ls = D-S
+        Ls_norm = np.dot(np.sqrt(linalg.inv(D)),np.dot(Ls,np.sqrt(linalg.inv(D))))
+
+        eigen_val, eigen_vec = eigsh(Ls_norm, self.num_clusters, which="SM")
+        k_means = KMeans(n_clusters=self.num_clusters, n_init=10, tol=0.0000001)
+        k_means.fit(eigen_vec)
+        data.pseudo_label = k_means.labels_
+
+        label = data.y.cuda().cpu().detach().numpy().copy()
+        nmi = clus.normalized_mutual_info_score(label, k_means.labels_)
+        print('\tDone process : make pseudo label (nmi: {:.3f})'.format(nmi))
+
+        return data
 
 class ExtractAttribute:
     def __init__(self, num_clusters, tree_depth):
@@ -94,10 +127,8 @@ class ExtractAttribute:
         if(self.tree_depth==-1):
             return data
 
-        pseudo_label = spectral_clustering(data, self.num_clusters)
-
         clf = DecisionTreeClassifier(max_depth=self.tree_depth)
-        clf = clf.fit(data.x, pseudo_label)
+        clf = clf.fit(data.x, data.pseudo_label)
         f_importance = clf.feature_importances_
         hit_idxes = [idx for idx, val in enumerate(
             f_importance) if val > 0]
@@ -339,34 +370,6 @@ def fuzzy_cmeans(data, n_of_clusters, *, m=1.07):
     result = torch.FloatTensor(np.array(fuzzy_means)).cuda()
     return result
 
-
-def spectral_clustering(data, n_class):
-    features = data.x.cpu().detach().numpy().copy()
-
-    S1 = cosine_similarity(features)
-    S1 = makeKnn(S1, 80)
-    normalized(S1)
-
-    S2 = utils.to_dense_adj(data.edge_index)[0]
-    S2 = S2.cpu().detach().numpy().copy()
-    normalized(S2)
-
-    S = (S1+S2)/2.
-    S = (S+S.T)/2.
-
-    D = np.diag(np.sum(S,axis=0))
-    Ls = D-S
-    Ls_norm = np.dot(np.sqrt(linalg.inv(D)),np.dot(Ls,np.sqrt(linalg.inv(D))))
-
-    eigen_val, eigen_vec = eigsh(Ls_norm, n_class, which="SM")
-    k_means = KMeans(n_clusters=n_class, n_init=10, tol=0.0000001)
-    k_means.fit(eigen_vec)
-    label = data.y.cuda().cpu().detach().numpy().copy()
-
-    nmi = clus.normalized_mutual_info_score(label, k_means.labels_)
-    print('\tnmi of pseudo-label : {}'.format(nmi))
-
-    return k_means.labels_
 
 def normalized(mat):
     for i in range(len(mat)):
