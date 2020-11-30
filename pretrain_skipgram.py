@@ -11,7 +11,7 @@ import os
 from sklearn.cluster import KMeans
 from sklearn.metrics.cluster import normalized_mutual_info_score
 
-from utilities import ExtractAttribute, ExtractSubstructureContextPair, nmi
+from utilities import ExtractAttribute, ExtractSubstructureContextPair, nmi, clustering_accuracy
 from models import GCN
 from debug import plot_Zn
 
@@ -66,7 +66,9 @@ def train(args, epoch, data, models, optimizers, log):
 
             label = data.y.cuda().cpu().detach().numpy().copy()
             nmi = normalized_mutual_info_score(label, k_means.labels_)
+            acc = clustering_accuracy(label, k_means.labels_, args.n_class)
             log['nmi'].append(nmi)
+            log['acc'].append(acc)
 
 
 def main():
@@ -126,15 +128,19 @@ def main():
 
     # log
     fig = plt.figure(figsize=(35, 35))
-    ax1, ax2 = fig.add_subplot(2, 1, 1), fig.add_subplot(2, 1, 2)
+    ax1, ax2, ax3 = fig.add_subplot(3, 1, 1), fig.add_subplot(3, 1, 2), fig.add_subplot(3, 1, 3)
     ax1.plot(log['loss'], label='loss')
-    ax1.legend(loc='upper right', prop={'size': 25})
+    ax1.legend(loc='upper right', prop={'size': 30})
     ax1.tick_params(axis='x', labelsize='23')
     ax1.tick_params(axis='y', labelsize='23')
     ax2.plot(log['nmi'], label='nmi')
-    ax2.legend(loc='upper left', prop={'size': 25})
+    ax2.legend(loc='upper left', prop={'size': 30})
     ax2.tick_params(axis='x', labelsize='23')
     ax2.tick_params(axis='y', labelsize='23')
+    ax3.plot(log['acc'], label='acc')
+    ax3.legend(loc='lower left', prop={'size': 30})
+    ax3.tick_params(axis='x', labelsize='23')
+    ax3.tick_params(axis='y', labelsize='23')
     plt.savefig('./data/experiment/{}/result.png'.format(args.save_dir))
 
     with open('./data/experiment/{}/parameters.txt'.format(args.save_dir), 'w') as w:

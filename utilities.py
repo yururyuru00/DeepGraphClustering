@@ -1,5 +1,6 @@
 import time
 import random
+import copy
 import numpy as np
 import scipy.sparse as sp
 import torch
@@ -8,6 +9,7 @@ from sklearn.cluster import KMeans
 from sklearn.metrics.pairwise import cosine_similarity
 from skfuzzy.cluster import cmeans
 import sklearn.metrics.cluster as clus
+from sklearn.metrics import accuracy_score
 import itertools
 import networkx as nx
 from torch_geometric.data import Data
@@ -88,17 +90,34 @@ class MakePseudoLabel:
     def __init__(self, num_clusters):
         self.num_clusters = num_clusters
 
+    def normalized(self, mat):
+        for i in range(len(mat)):
+            sum_ = np.sum(mat[i])
+            for j in range(len(mat[i])):
+                if(sum_ == 0):
+                    mat[i][j] = 0.
+                else:
+                    mat[i][j] = mat[i][j] / sum_
+
+    def makeKnn(self, mat, k):
+        knnmat = np.zeros((len(mat), len(mat[0])))
+        for i in range(len(mat)):
+            arg = np.argsort(-mat[i])
+            for top in range(k):
+                knnmat[i][arg[top]] = mat[i][arg[top]]
+        return knnmat
+
     def __call__(self, data):
 
         X = data.x.cpu().detach().numpy().copy()
 
         S1 = cosine_similarity(X)
-        S1 = makeKnn(S1, 80)
-        normalized(S1)
+        S1 = self.makeKnn(S1, 80)
+        self.normalized(S1)
 
         S2 = utils.to_dense_adj(data.edge_index)[0]
         S2 = S2.cpu().detach().numpy().copy()
-        normalized(S2)
+        self.normalized(S2)
 
         S = (S1+S2)/2.
         S = (S+S.T)/2.
@@ -124,6 +143,10 @@ class ExtractAttribute:
         self.tree_depth = tree_depth
 
     def __call__(self, data):
+
+        # if dataset.x is tf-idf, not bag of words, we transform it to bag of words
+        data.x = torch.where(data.x > 0., 1., 0.)
+
         if(self.tree_depth==-1):
             return data
 
@@ -370,24 +393,6 @@ def fuzzy_cmeans(data, n_of_clusters, *, m=1.07):
     result = torch.FloatTensor(np.array(fuzzy_means)).cuda()
     return result
 
-
-def normalized(mat):
-    for i in range(len(mat)):
-        sum_ = np.sum(mat[i])
-        for j in range(len(mat[i])):
-            if(sum_ == 0):
-                mat[i][j] = 0.
-            else:
-                mat[i][j] = mat[i][j] / sum_
-
-def makeKnn(mat, k):
-    knnmat = np.zeros((len(mat), len(mat[0])))
-    for i in range(len(mat)):
-        arg = np.argsort(-mat[i])
-        for top in range(k):
-            knnmat[i][arg[top]] = mat[i][arg[top]]
-    return knnmat
-
 def accuracy(output, labels):
     preds = output.max(1)[1].type_as(labels)
     correct = preds.eq(labels).double()
@@ -415,6 +420,32 @@ def purity(output, labels):
     for k in range(clus_size):
         sum += np.amax(table[k])
     return sum/usr_size
+
+def clustering_accuracy(labels, preds, num_class):
+    def make_tree(set_, map_, map_list):
+        if(len(set_) > 0):
+            for i in set_:
+                map_.append(i)
+                set__ = copy.copy(set_)
+                set__.remove(i)
+                make_tree(set__, map_, map_list)
+                map_.remove(i)
+        else:
+            map_list.append(map_.copy())
+
+    label_set = [i for i in range(num_class)]
+    map_list = []
+    make_tree(label_set, [], map_list)
+    
+    acc_max = 0.
+    for map_ in map_list:
+        map_ = {cluster_id : class_id for cluster_id, class_id in enumerate(map_)}
+        pred_mapped = list(map(map_.get, preds))
+        acc = accuracy_score(pred_mapped, labels)
+        if(acc > acc_max):
+            acc_max = acc
+    
+    return acc_max
 
 
 def encode_onehot(labels):
