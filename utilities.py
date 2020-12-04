@@ -17,8 +17,6 @@ from torch_geometric import utils
 from scipy.sparse.linalg import eigsh
 from scipy import linalg
 
-from debug import plot_G_contextG_pair
-
 
 class AugumentGraph:
 
@@ -86,6 +84,36 @@ def sample_from_neighbors(data, i, sample_size):
     sample_size = min(len(neighbors_list), sample_size)
     return random.sample(neighbors_list, sample_size)
 
+class BorderNodes:
+    def __call__(self, data):
+
+        edge_index = data.edge_index
+        y = data.y
+
+        G = nx.empty_graph()
+        for n in range(len(y)):
+            G.add_node(n)
+        for i, j in zip(edge_index[0], edge_index[1]):
+            G.add_edge(int(i), int(j))
+
+        border_nodes_list = []
+        for node in list(G.nodes):
+            neighbors = list(G.neighbors(node))
+            target_label = y[node]
+
+            count = 0
+            for neighbor in neighbors:
+                if y[neighbor] != target_label:
+                    count += 1
+            if(count/len(neighbors) > 0.5):
+                border_nodes_list.append(node)
+
+        # data.y[border_nodes_list] = border_nodes_label_id
+        data.border_nodes = torch.tensor(border_nodes_list)
+        print('\tDone process : border nodes')
+
+        return data
+
 class MakePseudoLabel:
     def __init__(self, num_clusters):
         self.num_clusters = num_clusters
@@ -150,12 +178,13 @@ class ExtractAttribute:
         if(self.tree_depth==-1):
             return data
 
-        clf = DecisionTreeClassifier(max_depth=self.tree_depth)
+        clf = DecisionTreeClassifier(max_depth=self.tree_depth, random_state=0)
         clf = clf.fit(data.x, data.pseudo_label)
         f_importance = clf.feature_importances_
         hit_idxes = [idx for idx, val in enumerate(
             f_importance) if val > 0]
 
+        print('hit idx size: {}'.format(len(hit_idxes)))
         data.x = data.x[:, hit_idxes]
 
         print('\tDone process : extract attribute')
@@ -224,14 +253,6 @@ class ExtractSubstructureContextPair:
         self.device = device
 
     def __call__(self, data):
-
-        # extract useful attributes for clustering (hit idx) of original attribute
-        pseudo_label = spectral_clustering(data, self.c)
-        data = extract_attribute(data, pseudo_label, 6)
-
-        # augument original graph based on BA and TF algorithm
-        data = augument_graph(data, 2300, 1, 10)
-
         G = graph_data_obj_to_nx(data)
 
         data.list = []  # i-th object of this list means a graph data of i-th cluster
@@ -385,6 +406,26 @@ def remake_to_labelorder(pred_tensor: torch.tensor, label_tensor: torch.tensor) 
                            for i in range(n_of_clusters)]).cuda()
     return torch.mm(pred_tensor, w)
 
+def border_nodes(dataset):
+
+    edge_index = dataset.edge_index
+    y = dataset.y
+
+    G = nx.empty_graph()
+    for n in range(len(y)):
+        G.add_node(n)
+
+    for i, j in zip(edge_index[0], edge_index[1]):
+        G.add_edge(int(i), int(j))
+
+    out = []
+    for node in list(G.nodes):
+        neighbors = list(G.neighbors(node))
+        target_label = y[node]
+        for neighbor in neighbors:
+            if y[neighbor] != target_label:
+                out.append(node)
+                break
 
 def fuzzy_cmeans(data, n_of_clusters, *, m=1.07):
     n_of_clusters = n_of_clusters.cuda().cpu().detach().numpy().copy()
@@ -405,10 +446,10 @@ def nmi(output, labels):
     labels = labels.cuda().cpu().detach().numpy().copy()
     return clus.adjusted_mutual_info_score(preds, labels, "arithmetic")
 
-def purity(output, labels):
-    preds = output.max(1)[1].type_as(labels)
+def purity(labels, preds):
+    '''preds = output.max(1)[1].type_as(labels)
     preds = preds.cuda().cpu().detach().numpy().copy()
-    labels = labels.cuda().cpu().detach().numpy().copy()
+    labels = labels.cuda().cpu().detach().numpy().copy()'''
     usr_size = len(preds)
     clus_size = np.max(preds)+1
     clas_size = np.max(labels)+1

@@ -7,6 +7,9 @@ from torch_geometric.nn import GCNConv
 class DGC(nn.Module):
     def __init__(self, base, n_feat, n_hid, n_class, dropout):
         super(DGC, self).__init__()
+        self.gcn_layer = n_hid['gcn']
+        self.clus_layer = n_hid['clustering']
+        self.reconst_layer = n_hid['']
 
         # add GClayer based on pretrained GCN
         self.gc_layers = torch.nn.ModuleList()
@@ -14,17 +17,17 @@ class DGC(nn.Module):
             self.gc_layers.append(layer)
 
         # add clustering layer
-        self.clus1 = nn.Linear(n_hid['gc'][-1], n_hid['clustering'][0])
-        self.bn1 = nn.BatchNorm1d(n_hid['clustering'][0])
-        self.clus2 = nn.Linear(n_hid['clustering'][0], n_hid['clustering'][1])
-        self.bn2 = nn.BatchNorm1d(n_hid['clustering'][1])
-        self.clus3 = nn.Linear(n_hid['clustering'][1], n_class)
+        self.clus1 = nn.Linear(self.gcn_layer[-1], self.clus_layer[0])
+        self.bn1 = nn.BatchNorm1d(self.clus_layer[0])
+        self.clus2 = nn.Linear(self.clus_layer[0], self.clus_layer[1])
+        self.bn2 = nn.BatchNorm1d(self.clus_layer[1])
+        self.clus3 = nn.Linear(self.clus_layer[1], n_class)
         self.softmax = nn.Softmax(dim=1)
 
         # add reconstruct layer
-        self.rec1 = nn.Linear(n_hid['gc'][-1], n_hid['reconstruct'][0])
-        self.rec2 = nn.Linear(n_hid['reconstruct'][0], n_hid['reconstruct'][1])
-        self.rec3 = nn.Linear(n_hid['reconstruct'][1], n_feat)
+        self.rec1 = nn.Linear(self.gcn_layer[-1], self.reconst_layer[0])
+        self.rec2 = nn.Linear(self.reconst_layer[0], self.reconst_layer[1])
+        self.rec3 = nn.Linear(self.reconst_layer[1], n_feat)
         self.dropout = dropout
 
     def forward(self, x, edge_index):
@@ -53,6 +56,8 @@ class DGC(nn.Module):
 
 class GCN(nn.Module):
     def __init__(self, n_feat, hid):
+        torch.manual_seed(0)
+
         super(GCN, self).__init__()
         self.num_layer = len(hid)
 

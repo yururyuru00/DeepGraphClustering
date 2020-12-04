@@ -1,119 +1,153 @@
 from tqdm import tqdm
+import os
 import matplotlib.pyplot as plt
 import torch
+import numpy as np
 import argparse
 from torch_geometric.datasets import KarateClub
 from torch_geometric.datasets import Planetoid
 import torch.nn.functional as F
-from utilities import remake_to_labelorder, nmi, purity
+from utilities import ExtractAttribute, remake_to_labelorder, nmi, purity
 from layers import FrobeniusNorm
 from models import DGC, GCN
 import torch.optim as optim
 from sklearn.cluster import KMeans
+from sklearn.metrics.cluster import normalized_mutual_info_score
 import math
+
 
 loss_frobenius = FrobeniusNorm()
 
-
-def train(model_dgc, data, optimizer, log):
+def train(args, epoch, model_dgc, data, optimizer, log):
     model_dgc.train()
-    optimizer.zero_grad()
-    [clus_labels, reconstructed_x], Zn = model_dgc(data.x, data.edge_index)
+    [pred_clusters, reconstructed_x], Zn = model_dgc(data.x, data.edge_index)
+    pred_hard_clusters = pred_clusters.cuda().cpu().detach().numpy().copy()
+    pred_hard_clusters = np.array([np.argmax(i) for i in pred_hard_clusters])
 
     # make pseudo labels by using k-means
     Zn_np = Zn.cuda().cpu().detach().numpy().copy()
-    n_class = torch.max(data.y).cuda().cpu().detach().numpy().copy() + 1
-    k_means = KMeans(n_class, n_init=10, random_state=0, tol=0.0000001)
+    k_means = KMeans(args.n_class, n_init=10, random_state=0, tol=0.0000001)
     k_means.fit(Zn_np)
     pseudo_label = torch.LongTensor(k_means.labels_).cuda()
 
     # map the two labels (predicted labels and pseudo labels) to each other.
-    clus_labels_mapped = remake_to_labelorder(clus_labels, pseudo_label)
+    pred_clusters_mapped = remake_to_labelorder(pred_clusters, pseudo_label)
 
-    loss_clustering = F.nll_loss(
-        clus_labels_mapped, pseudo_label)
+    loss_clustering = F.nll_loss(pred_clusters_mapped, pseudo_label)
     loss_reconstruct = loss_frobenius(reconstructed_x, data.x)
     loss = loss_clustering + loss_reconstruct
+    
+    optimizer.zero_grad()
     loss.backward()
     optimizer.step()
 
-    nmi_train = nmi(clus_labels, data.y)
-    pur_train = purity(clus_labels, data.y)
-
     # loging every time
-    log['loss_clustering'].append(loss_clustering.item())
-    log['loss_reconstruct'].append(loss_reconstruct.item())
-    log['nmi'].append(nmi_train)
-    log['pur'].append(pur_train)
+    if(epoch % 10 ==0):
+        np.save('./data/experiment/{}/Zn_epoch{}'.format(args.save_dir, epoch), Zn_np)
+        np.savetxt('./data/experiment/{}/pred_clusters_epoch{}'
+                    .format(args.save_dir, epoch), pred_hard_clusters)
+
+        labels = data.y.cuda().cpu().detach().numpy().copy()
+        nmi = normalized_mutual_info_score(labels, pred_hard_clusters)
+        pur = purity(labels, pred_hard_clusters)
+
+        log['loss_clus'].append(loss_clustering.item())
+        log['loss_reconst'].append(loss_reconstruct.item())
+        log['nmi'].append(nmi)
+        log['pur'].append(pur)
 
 
-parser = argparse.ArgumentParser(
-    description='PyTorch implementation of pre-training of GNN')
-parser.add_argument('--dataset', type=str, default='Cora',
-                    help='dataset')
-parser.add_argument('--lr', type=float, default=0.001,
-                    help='learning rate (default: 0.001)')
-parser.add_argument('--weight_decay', type=float, default=5e-4,
-                    help='weight decay (default: 5e-4)')
-parser.add_argument('--dropout', type=float, default=0.5,
-                    help='Dropout rate (1 - keep probability).')
-parser.add_argument('--epochs', type=int, default=100,
-                    help='number of epochs to train (defalt: 100)')
-args = parser.parse_args()
+def main():
+    # setting args check
+    parser = argparse.ArgumentParser(
+        description='PyTorch implementation of pre-training of GNN')
+    parser.add_argument('-d', '--dataset', type=str, default='Cora', 
+                        help='dataset of {Cora, CiteSeer, PubMed} (default: Cora)')
+    parser.add_argument('-c', '--n_class', type=int, default=7,
+                        help='number of class (default: 7)')
+    parser.add_argument('-l', '--learning_rate', type=float, default=0.001,
+                        help='learning rate (default: 0.001)')
+    parser.add_argument('-w', '--weight_decay', type=float, default=5e-4,
+                        help='weight decay (default: 5e-4)')
+    parser.add_argument('-r', '--rate_dropout', type=float, default=0.5,
+                        help='Dropout rate (1 - keep probability).')
+    parser.add_argument('-e', '--epochs', type=int, default=500,
+                        help='number of epochs to train (defalt: 500)')
+    parser.add_argument('-p', '--pretrained_gcn_dir', type=str, default='test',
+                        help='dir of pretrained gcn to load (Default: test)')
+    parser.add_argument('-g', '--gcn_layer', type=int, nargs='+', default=[128, 64, 32, 16],
+                        help='number of hidden layer of GCN (default: 128 64 32 16)')
+    parser.add_argument('-cl', '--clustering_layer', type=int, nargs='+', default=[16, 16, 16],
+                        help='number of hidden layer of clustering MLP (default: 16 16 16)')
+    parser.add_argument('-rl', '--reconstruct_layer', type=int, nargs='+', default=[16, 16, 16],
+                        help='number of hidden layer of reconstruct MLP (default: 16 16 16)')
+    parser.add_argument('-t', '--tree_depth', type=int, default=4,
+                            help='tree depth of decision tree for hit idx (default: 10)')
+    parser.add_argument('-s', '--save_dir', type=str, default='test',
+                        help='dir name when save log (default: test)')
+    args = parser.parse_args()
 
-# load and transform dataset
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-dataset = Planetoid(root='./data/experiment/', name=args.dataset)
-data = dataset[0]
-print(data, end='\n\n')
+    # load and transform dataset
+    os.makedirs('./data/experiment/{}'.format(args.save_dir))
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    dataset = Planetoid(root='./data/experiment/', name=args.dataset, 
+                        transform=ExtractAttribute(args.n_class, args.tree_depth))
+    data = dataset[0].to(device)
+    print(data, end='\n\n')
 
-# set up DGC model
-n_attributes = data.x.shape[1]
-n_class = torch.max(data.y).cuda().cpu().detach().numpy().copy()+1
-hidden = {'gc': [1024, 512, 256],
-          'clustering': [64, 32], 'reconstruct': [128, 64]}
-base_model = GCN(n_feat=n_attributes, hid=hidden['gc']).to(device)
-base_model.load_state_dict(torch.load('./pretrained_gcn'))
-model_dgc = DGC(base=base_model, n_feat=n_attributes, n_hid=hidden,
-                n_class=n_class, dropout=args.dropout).to(device)
+    # set up DGC model
+    n_attributes = data.x.shape[1]
+    n_class = torch.max(data.y).cuda().cpu().detach().numpy().copy()+1
+    base_model = GCN(n_feat=n_attributes, hid=args.gcn_layer).to(device)
+    base_model.load_state_dict(torch.load('./data/experiment/{}/{}/pretrained_gcn'
+                                            .format(args.dataset, args.pretrained_gcn_dir)))
+    num_hidden = {'gcn': args.gcn_layer, 'clustering': args.clustering_layer, 
+                    'reconstruct': args.reconstruct_layer}
+    model_dgc = DGC(base_model, n_attributes, num_hidden, args.n_class, args.dropout).to(device)
 
-# set up optimizer
-optimizer = optim.Adam(model_dgc.parameters(),
-                       lr=args.lr, weight_decay=args.weight_decay)
+    # set up optimizer
+    optimizer = optim.Adam(model_dgc.parameters(),
+                           lr=args.learning_rate, weight_decay=args.weight_decay)
 
-# train
-log = {'loss_clustering': [], 'loss_reconstruct': [], 'nmi': [], 'pur': []}
-for epoch in tqdm(range(args.epochs)):
-    train(model_dgc, data.to(device), optimizer, log)
+    # train
+    log = {'loss_clus': [], 'loss_reconst': [], 'nmi': [], 'pur': []}
+    for epoch in tqdm(range(args.epochs+1)):
+        train(args, epoch, model_dgc, data, optimizer, log)
 
 
-# log
-fig = plt.figure(figsize=(17, 17))
-plt.plot(log['nmi'], label='nmi')
-plt.legend(loc='upper right', prop={'size': 12})
-plt.tick_params(axis='x', labelsize='12')
-plt.tick_params(axis='y', labelsize='12')
-plt.show()
+    # log
+    fig = plt.figure(figsize=(35, 35))
+    ax1, ax2, ax3, ax4 = fig.add_subplot(2, 2, 1), fig.add_subplot(2, 2, 2), \
+        fig.add_subplot(2, 2, 3), fig.add_subplot(2, 2, 4)
+    ax1.plot(log['loss_clus'], label='loss_clustering')
+    ax1.legend(loc='upper right', prop={'size': 25})
+    ax1.tick_params(axis='x', labelsize='23')
+    ax1.tick_params(axis='y', labelsize='23')
+    ax2.plot(log['loss_reconst'], label='loss_reconstruct')
+    ax2.legend(loc='upper right', prop={'size': 25})
+    ax2.tick_params(axis='x', labelsize='23')
+    ax2.tick_params(axis='y', labelsize='23')
+    ax3.plot(log['nmi'], label='nmi')
+    ax3.legend(loc='lower right', prop={'size': 25})
+    ax3.tick_params(axis='x', labelsize='23')
+    ax3.tick_params(axis='y', labelsize='23')
+    ax3.set_ylim(min(log['nmi']), math.ceil(10*max(log['nmi']))/10)
+    ax4.plot(log['pur'], label='purity')
+    ax4.legend(loc='lower right', prop={'size': 25})
+    ax4.tick_params(axis='x', labelsize='23')
+    ax4.tick_params(axis='y', labelsize='23')
+    ax4.set_ylim(min(log['pur']), math.ceil(10*max(log['pur']))/10)
+    plt.savefig('./data/experiment/{}/result.png'.format(args.save_dir))
 
-fig = plt.figure(figsize=(35, 35))
-ax1, ax2, ax3, ax4 = fig.add_subplot(2, 2, 1), fig.add_subplot(2, 2, 2), \
-    fig.add_subplot(2, 2, 3), fig.add_subplot(2, 2, 4)
-ax1.plot(log['loss_clustering'], label='loss_clustering')
-ax1.legend(loc='upper right', prop={'size': 25})
-ax1.tick_params(axis='x', labelsize='23')
-ax1.tick_params(axis='y', labelsize='23')
-ax2.plot(log['loss_reconstruct'], label='loss_reconstruct')
-ax2.legend(loc='upper right', prop={'size': 25})
-ax2.tick_params(axis='x', labelsize='23')
-ax2.tick_params(axis='y', labelsize='23')
-ax3.plot(log['nmi'], label='nmi')
-ax3.legend(loc='lower right', prop={'size': 25})
-ax3.tick_params(axis='x', labelsize='23')
-ax3.tick_params(axis='y', labelsize='23')
-ax3.set_ylim(min(log['nmi']), math.ceil(10*max(log['nmi']))/10)
-ax4.plot(log['pur'], label='purity')
-ax4.legend(loc='lower right', prop={'size': 25})
-ax4.tick_params(axis='x', labelsize='23')
-ax4.tick_params(axis='y', labelsize='23')
-ax4.set_ylim(min(log['pur']), math.ceil(10*max(log['pur']))/10)
-plt.savefig('./data/experiment/test/result.png')
+    with open('./data/experiment/{}/parameters.txt'.format(args.save_dir), 'w') as w:
+            for parameter in vars(args):
+                w.write('{}: {}\n'.format(parameter, getattr(args, parameter)))
+        
+    with open('./data/experiment/{}/result.txt'.format(args.save_dir), 'w') as w:
+        w.write('loss\tnmi \tpurity\n')
+        for loss, nmi, purity in zip(log['loss'], log['nmi'], log['pur']):
+            w.write('{:.3f}\t{:.3f}\t{:.3f}\n'.format(loss, nmi, purity))
+
+
+if __name__ == "__main__":
+    main()

@@ -72,6 +72,7 @@ def train(args, epoch, data, models, optimizers, log):
 
 
 def main():
+    # setting args check
     parser = argparse.ArgumentParser(
         description='PyTorch implementation of pre-training of GNN')
     parser.add_argument('--dataset', type=str, default='Cora', 
