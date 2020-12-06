@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import GCNConv
+from torch_geometric.nn import GINConv
 
 
 class DGC(nn.Module):
@@ -9,66 +10,68 @@ class DGC(nn.Module):
         super(DGC, self).__init__()
         self.gcn_layer = n_hid['gcn']
         self.clus_layer = n_hid['clustering']
-        self.reconst_layer = n_hid['']
+        self.reconst_layer = n_hid['reconstruct']
 
-        # add GClayer based on pretrained GCN
+        # add GCN layer based on pretrained GCN
         self.gc_layers = torch.nn.ModuleList()
         for layer in base.gc_layers:
             self.gc_layers.append(layer)
 
         # add clustering layer
-        self.clus1 = nn.Linear(self.gcn_layer[-1], self.clus_layer[0])
-        self.bn1 = nn.BatchNorm1d(self.clus_layer[0])
-        self.clus2 = nn.Linear(self.clus_layer[0], self.clus_layer[1])
-        self.bn2 = nn.BatchNorm1d(self.clus_layer[1])
-        self.clus3 = nn.Linear(self.clus_layer[1], n_class)
-        self.softmax = nn.Softmax(dim=1)
-
+        self.clus = nn.ModuleList()
+        n_layers = [self.gcn_layer[-1]] + self.clus_layer
+        for idx in range(len(n_layers)-1):
+            self.clus.append(nn.Linear(n_layers[idx], n_layers[idx+1]))
+            self.clus.append(nn.BatchNorm1d(n_layers[idx+1]))
+            self.clus.append(nn.ReLU())
+        self.clus.append(nn.Linear(n_layers[-1], n_class))
+        self.clus.append(nn.Softmax(dim=1))
+        
         # add reconstruct layer
-        self.rec1 = nn.Linear(self.gcn_layer[-1], self.reconst_layer[0])
-        self.rec2 = nn.Linear(self.reconst_layer[0], self.reconst_layer[1])
-        self.rec3 = nn.Linear(self.reconst_layer[1], n_feat)
-        self.dropout = dropout
+        self.reconst = nn.ModuleList()
+        n_layers = [self.gcn_layer[-1]] + self.reconst_layer
+        for idx in range(len(n_layers)-1):
+            self.reconst.append(nn.Linear(n_layers[idx], n_layers[idx+1]))
+            self.reconst.append(nn.ReLU())
+            self.reconst.append(nn.Dropout(p=dropout))
+        self.reconst.append(nn.Linear(n_layers[-1], n_feat))
+        self.reconst.append(nn.Dropout(p=dropout))
 
     def forward(self, x, edge_index):
-        # Graph Convolution
+        # convolution graph
         n_layer_gc = len(self.gc_layers)
         for layer in range(n_layer_gc):
             x = self.gc_layers[layer](x, edge_index)
             x = torch.tanh(x)
 
-        # Clustering MLP
-        x_c = F.relu(self.bn1(self.clus1(x)))
-        x_c = F.relu(self.bn2(self.clus2(x_c)))
-        x_c = self.clus3(x_c)
-        x_c = self.softmax(x_c)
-
-        # Reconstruct MLP
-        x_r = F.relu(self.rec1(x))
-        x_r = F.dropout(x_r, self.dropout, training=self.training)
-        x_r = F.relu(self.rec2(x_r))
-        x_r = F.dropout(x_r, self.dropout, training=self.training)
-        x_r = self.rec3(x_r)
-        x_r = F.dropout(x_r, self.dropout, training=self.training)
+        x_c, x_r = x.clone(), x.clone()
+        # cluster and reconstruct by MLP
+        for layer in self.clus:
+            x_c = layer(x_c)
+        for layer in self.reconst:
+            x_r = layer(x_r)
 
         return [x_c, x_r], x
 
 
 class GCN(nn.Module):
-    def __init__(self, n_feat, hid):
+    def __init__(self, model, n_feat, hid):
         torch.manual_seed(0)
-
         super(GCN, self).__init__()
-        self.num_layer = len(hid)
+        self.layers = [n_feat] + hid
 
         self.gc_layers = torch.nn.ModuleList()
-        for layer in range(self.num_layer):
-            if(layer == 0):
-                self.gc_layers.append(GCNConv(n_feat, hid[0]))
-            else:
-                self.gc_layers.append(GCNConv(hid[layer-1], hid[layer]))
+        for idx in range(len(self.layers)-1):
+            if(model == 'gcn'): # if use GCNConv
+                self.gc_layers.append(GCNConv(self.layers[idx], self.layers[idx+1]))
+
+            else: # if use GINConv
+                mlp = nn.Sequential(nn.Linear(self.layers[idx], self.layers[idx]), 
+                                    torch.nn.BatchNorm1d(self.layers[idx]), nn.ReLU(),
+                                    nn.Linear(self.layers[idx], self.layers[idx+1]))
+                self.gc_layers.append(GINConv(mlp, eps=0., train_eps=False))
 
     def forward(self, x, edge_index):
-        for layer in range(self.num_layer):
-            x = self.gc_layers[layer](x, edge_index)
+        for idx in range(len(self.layers)-1):
+            x = self.gc_layers[idx](x, edge_index)
         return x

@@ -184,10 +184,9 @@ class ExtractAttribute:
         hit_idxes = [idx for idx, val in enumerate(
             f_importance) if val > 0]
 
-        print('hit idx size: {}'.format(len(hit_idxes)))
         data.x = data.x[:, hit_idxes]
 
-        print('\tDone process : extract attribute')
+        print('\tDone process : extract attribute (hit idx size: {})'.format(len(hit_idxes)))
         return data
 
 

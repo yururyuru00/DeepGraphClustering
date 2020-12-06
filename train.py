@@ -14,6 +14,8 @@ import torch.optim as optim
 from sklearn.cluster import KMeans
 from sklearn.metrics.cluster import normalized_mutual_info_score
 import math
+import time
+from kmeans_pytorch import kmeans
 
 
 loss_frobenius = FrobeniusNorm()
@@ -21,42 +23,38 @@ loss_frobenius = FrobeniusNorm()
 def train(args, epoch, model_dgc, data, optimizer, log):
     model_dgc.train()
     [pred_clusters, reconstructed_x], Zn = model_dgc(data.x, data.edge_index)
-    pred_hard_clusters = pred_clusters.cuda().cpu().detach().numpy().copy()
-    pred_hard_clusters = np.array([np.argmax(i) for i in pred_hard_clusters])
 
     # make pseudo labels by using k-means
     Zn_np = Zn.cuda().cpu().detach().numpy().copy()
-    k_means = KMeans(args.n_class, n_init=10, random_state=0, tol=0.0000001)
+    n_class = torch.max(data.y).cuda().cpu().detach().numpy().copy() + 1
+    k_means = KMeans(n_class, n_init=10, random_state=0, tol=0.0000001)
     k_means.fit(Zn_np)
     pseudo_label = torch.LongTensor(k_means.labels_).cuda()
 
     # map the two labels (predicted labels and pseudo labels) to each other.
     pred_clusters_mapped = remake_to_labelorder(pred_clusters, pseudo_label)
-
+    
     loss_clustering = F.nll_loss(pred_clusters_mapped, pseudo_label)
     loss_reconstruct = loss_frobenius(reconstructed_x, data.x)
     loss = loss_clustering + loss_reconstruct
-    
+
     optimizer.zero_grad()
     loss.backward()
     optimizer.step()
 
     # loging every time
-    if(epoch % 10 ==0):
-        np.save('./data/experiment/{}/Zn_epoch{}'.format(args.save_dir, epoch), Zn_np)
-        np.savetxt('./data/experiment/{}/pred_clusters_epoch{}'
-                    .format(args.save_dir, epoch), pred_hard_clusters)
+    pred_clusters = pred_clusters.cuda().cpu().detach().numpy().copy()
+    pred_hard_clusters = np.array([np.argmax(i) for i in pred_clusters])
+    labels = data.y.cuda().cpu().detach().numpy().copy()
+    nmi = normalized_mutual_info_score(labels, pred_hard_clusters)
+    pur = purity(labels, pred_hard_clusters)
 
-        labels = data.y.cuda().cpu().detach().numpy().copy()
-        nmi = normalized_mutual_info_score(labels, pred_hard_clusters)
-        pur = purity(labels, pred_hard_clusters)
+    log['loss_clus'].append(loss_clustering.cuda().cpu().detach().numpy().copy())
+    log['loss_reconst'].append(loss_reconstruct.cuda().cpu().detach().numpy().copy())
+    log['nmi'].append(nmi)
+    log['pur'].append(pur)
 
-        log['loss_clus'].append(loss_clustering.item())
-        log['loss_reconst'].append(loss_reconstruct.item())
-        log['nmi'].append(nmi)
-        log['pur'].append(pur)
-
-
+    
 def main():
     # setting args check
     parser = argparse.ArgumentParser(
@@ -75,14 +73,16 @@ def main():
                         help='number of epochs to train (defalt: 500)')
     parser.add_argument('-p', '--pretrained_gcn_dir', type=str, default='test',
                         help='dir of pretrained gcn to load (Default: test)')
+    parser.add_argument('-m', '--model', type=str, default='gcn',
+                        help='dataset of {gcn, gin} (default: gcn)')
     parser.add_argument('-g', '--gcn_layer', type=int, nargs='+', default=[128, 64, 32, 16],
                         help='number of hidden layer of GCN (default: 128 64 32 16)')
-    parser.add_argument('-cl', '--clustering_layer', type=int, nargs='+', default=[16, 16, 16],
-                        help='number of hidden layer of clustering MLP (default: 16 16 16)')
-    parser.add_argument('-rl', '--reconstruct_layer', type=int, nargs='+', default=[16, 16, 16],
-                        help='number of hidden layer of reconstruct MLP (default: 16 16 16)')
+    parser.add_argument('-cl', '--clustering_layer', type=int, nargs='+', default=[64, 32],
+                        help='number of hidden layer of clustering MLP (default: 64 32)')
+    parser.add_argument('-rl', '--reconstruct_layer', type=int, nargs='+', default=[128, 64],
+                        help='number of hidden layer of reconstruct MLP (default: 128 64)')
     parser.add_argument('-t', '--tree_depth', type=int, default=4,
-                            help='tree depth of decision tree for hit idx (default: 10)')
+                            help='tree depth of decision tree for hit idx (default: 4)')
     parser.add_argument('-s', '--save_dir', type=str, default='test',
                         help='dir name when save log (default: test)')
     args = parser.parse_args()
@@ -98,12 +98,12 @@ def main():
     # set up DGC model
     n_attributes = data.x.shape[1]
     n_class = torch.max(data.y).cuda().cpu().detach().numpy().copy()+1
-    base_model = GCN(n_feat=n_attributes, hid=args.gcn_layer).to(device)
+    base_model = GCN(args.model, n_attributes, args.gcn_layer).to(device)
     base_model.load_state_dict(torch.load('./data/experiment/{}/{}/pretrained_gcn'
                                             .format(args.dataset, args.pretrained_gcn_dir)))
     num_hidden = {'gcn': args.gcn_layer, 'clustering': args.clustering_layer, 
                     'reconstruct': args.reconstruct_layer}
-    model_dgc = DGC(base_model, n_attributes, num_hidden, args.n_class, args.dropout).to(device)
+    model_dgc = DGC(base_model, n_attributes, num_hidden, args.n_class, args.rate_dropout).to(device)
 
     # set up optimizer
     optimizer = optim.Adam(model_dgc.parameters(),
@@ -145,7 +145,7 @@ def main():
         
     with open('./data/experiment/{}/result.txt'.format(args.save_dir), 'w') as w:
         w.write('loss\tnmi \tpurity\n')
-        for loss, nmi, purity in zip(log['loss'], log['nmi'], log['pur']):
+        for loss, nmi, purity in zip(log['loss_clus'], log['nmi'], log['pur']):
             w.write('{:.3f}\t{:.3f}\t{:.3f}\n'.format(loss, nmi, purity))
 
 
