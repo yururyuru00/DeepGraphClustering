@@ -94,8 +94,8 @@ def main():
                         help='dir of pretrained gcn to load (Default: None)')
     parser.add_argument('-m', '--model', type=str, default='gcn',
                         help='dataset of {gcn, gin} (default: gcn)')
-    parser.add_argument('-g', '--gcn_layer', type=int, nargs='+', default=[128, 64, 32, 16],
-                        help='number of hidden layer of GCN (default: 128 64 32 16)')
+    parser.add_argument('-g', '--gcn_layer', type=int, nargs='+', default=[300,300,300,300],
+                        help='dimension of hidden layers of GCN (default: 300 300 300 300)')
     parser.add_argument('-t', '--tree_depth', type=int, default=4,
                         help='tree depth of decision tree for hit idx (default: 4)')
     parser.add_argument('-mn', '--mask_rate_node', type=float, default=0.15,
