@@ -39,7 +39,7 @@ def train(args, epoch, data, models, optimizers, log):
     # mask the edge representation
     if(args.mask_rate_edge > 0.):
         edge_preds = []
-        for u, v in data.mask_edge_idxes:
+        for u, v in data.masked_edge_list:
             edge_pred = linear_pred_edges(node_emb[u], node_emb[v])
             edge_preds.append(edge_pred)
         edge_preds = torch.cat(edge_preds, axis=0)
@@ -57,11 +57,10 @@ def train(args, epoch, data, models, optimizers, log):
 
     # logging
     log['loss'].append(loss.cuda().cpu().detach().numpy().copy())
-    if(epoch % 10 == 0):
-        # when calculate clustering accuracy, we do not mask graph
+    # when calculate clustering accuracy, we do not mask graph
+    if(epoch%10 == 0):
         node_emb_not_masked = model(data.x, data.edge_index)
         Zn_np = node_emb_not_masked.cuda().cpu().detach().numpy().copy()
-        np.save('./data/experiment/{}/Zn_notmask_epoch{}'.format(args.save_dir, epoch), Zn_np)
 
         k_means = KMeans(args.n_class, n_init=10, random_state=0, tol=0.0000001)
         k_means.fit(Zn_np)
@@ -71,8 +70,14 @@ def train(args, epoch, data, models, optimizers, log):
         pur = purity(label, k_means.labels_)
         log['nmi'].append(nmi)
         log['pur'].append(pur)
+
+    if(epoch==args.epochs): # logging after pretrain
+        acc, pred_mapped = clustering_accuracy(label, k_means.labels_)
         np.savetxt('./data/experiment/{}/pred_clusters_epoch{}.csv'
-                    .format(args.save_dir, epoch), k_means.labels_, fmt='%d')
+                    .format(args.save_dir, epoch), pred_mapped, fmt='%d')
+        np.savetxt('./data/experiment/{}/label.csv'
+                    .format(args.save_dir), label, fmt='%d')
+        
         
 
 def main():
@@ -110,21 +115,21 @@ def main():
     # load and transform dataset
     os.makedirs('./data/experiment/{}'.format(args.save_dir))
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    transform = transforms.Compose([ExtractAttribute(args.n_class, args.tree_depth),
+    transform = transforms.Compose([ExtractAttribute(args.tree_depth),
                                     MaskGraph(args.mask_rate_node, args.mask_rate_edge)])
     dataset = Planetoid(root='./data/experiment/', name=args.dataset, 
                         pre_transform=MakePseudoLabel(args.n_class), transform=transform)
     data = dataset[0].to(device)
     print(data, end='\n\n')
 
-    # set up GCN model and linear model to predict node features
+    # set up GCN model
     n_attributes = data.masked_x.shape[1]
     model = GCN(args.model, n_attributes, args.gcn_layer).to(device)
     if(args.pretrained_gcn_dir != 'None'):
         model.load_state_dict(torch.load('./data/experiment/{}/{}/pretrained_gcn'
                                             .format(args.dataset, args.pretrained_gcn_dir)))
 
-    # below linear model predict if edge between nodes is exist or not
+    # below linear model predict node attribute and if edge between nodes is exist or not
     dim_embedding = args.gcn_layer[-1]
     linear_pred_nodes = torch.nn.Linear(dim_embedding, n_attributes).to(device)
     linear_pred_edges = NeuralTensorNetwork(dim_embedding, 1).to(device)

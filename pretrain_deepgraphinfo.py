@@ -72,15 +72,22 @@ def train(args, epoch, data, model, optimizer, device, log):
     # logging
     log['loss'].append(loss.cuda().cpu().detach().numpy().copy())
 
-    Zn_np = node_emb.cuda().cpu().detach().numpy().copy()
-    k_means = KMeans(args.n_class, n_init=10, random_state=0, tol=0.0000001)
-    k_means.fit(Zn_np)
-    label = data.y.cuda().cpu().detach().numpy().copy()
+    if(epoch%10 == 0):
+        p_score = positive_score.cuda().cpu().detach().numpy().copy()
+        n_score = negative_score.cuda().cpu().detach().numpy().copy()
+        np.savetxt('./data/experiment/{}/p_{}.csv'.format(args.save_dir, epoch), p_score)
+        np.savetxt('./data/experiment/{}/n_{}.csv'.format(args.save_dir, epoch), n_score)
 
-    nmi = normalized_mutual_info_score(label, k_means.labels_)
-    pur = purity(label, k_means.labels_)
-    log['nmi'].append(nmi)
-    log['pur'].append(pur)
+        Zn_np = node_emb.cuda().cpu().detach().numpy().copy()
+        np.save('./data/experiment/{}/Zn_{}'.format(args.save_dir, epoch), Zn_np)
+        k_means = KMeans(args.n_class, n_init=10, random_state=0, tol=0.0000001)
+        k_means.fit(Zn_np)
+        label = data.y.cuda().cpu().detach().numpy().copy()
+
+        nmi = normalized_mutual_info_score(label, k_means.labels_)
+        pur = purity(label, k_means.labels_)
+        log['nmi'].append(nmi)
+        log['pur'].append(pur)
 
 
 
@@ -94,8 +101,8 @@ def main():
                         help='number of class (default: 7)')
     parser.add_argument('-l', '--learning_rate', type=float, default=0.001,
                         help='learning rate (default: 0.001)')
-    parser.add_argument('-w', '--weight_decay', type=float, default=5e-4,
-                        help='weight decay (default: 5e-4)')
+    parser.add_argument('-w', '--weight_decay', type=float, default=0.,
+                        help='weight decay (default: 0.0)')
     parser.add_argument('-e', '--epochs', type=int, default=500,
                         help='number of epochs to train (defalt: 500)')
     parser.add_argument('-p', '--pretrained_gcn_dir', type=str, default='None',
