@@ -18,6 +18,7 @@ from scipy.sparse.linalg import eigsh
 from scipy import linalg
 
 
+
 class AugumentGraph:
 
     def __init__(self, num_steps, num_edges_BA, num_edges_TF):
@@ -38,8 +39,9 @@ class AugumentGraph:
 
             # add new node
             new_node_attr = torch.zeros(1, num_dims, dtype=torch.float)
-            data.y = torch.cat((data.y, torch.LongTensor([7])), 
-                                dim=0) # label 7 means augmented vertices
+            # augmented vertices labeled with 'new_node_label'
+            new_node_label = data.y.max().item() + 1
+            data.y = torch.cat((data.y, torch.LongTensor([new_node_label])), dim=0) 
             num_nodes += 1
             new_node_id = num_nodes-1
             neighbor_node_idxes_of_newnode = []
@@ -114,6 +116,26 @@ class BorderNodes:
 
         return data
 
+class NormalizeData:
+    def normalize(self, mx):
+        rowsum = np.array(mx.sum(1))
+        r_inv = np.power(rowsum, -1).flatten()
+        r_inv[np.isinf(r_inv)] = 0.
+        r_mat_inv = sp.diags(r_inv)
+        mx = r_mat_inv.dot(mx)
+        return mx
+
+    def __call__(self, data):
+        adj = utils.to_dense_adj(data.edge_index)[0]
+        adj = self.normalize(adj + torch.eye(adj.size()[0]))
+        data.edge_index = utils.dense_to_sparse(torch.FloatTensor(adj))[0]
+
+        data.x = self.normalize(data.x)
+        data.x = torch.FloatTensor(np.array(data.x))
+
+        return data
+
+
 class MakePseudoLabel:
     def __init__(self, num_clusters):
         self.num_clusters = num_clusters
@@ -166,27 +188,27 @@ class MakePseudoLabel:
         return data
 
 class ExtractAttribute:
-    def __init__(self, num_clusters, tree_depth):
-        self.num_clusters = num_clusters
+    def __init__(self, tree_depth):
         self.tree_depth = tree_depth
 
     def __call__(self, data):
 
         # if dataset.x is tf-idf, not bag of words, we transform it to bag of words
         data.x = torch.where(data.x > 0., 1., 0.)
+        label = data.pseudo_label
 
         if(self.tree_depth==-1):
             return data
 
         clf = DecisionTreeClassifier(max_depth=self.tree_depth, random_state=0)
-        clf = clf.fit(data.x, data.pseudo_label)
+        clf = clf.fit(data.x, label)
         f_importance = clf.feature_importances_
-        hit_idxes = [idx for idx, val in enumerate(
-            f_importance) if val > 0]
+        data.hit_idxes = [idx for idx, val in enumerate(
+                            f_importance) if val > 0]
 
-        data.x = data.x[:, hit_idxes]
+        data.x = data.x[:, data.hit_idxes]
 
-        print('\tDone process : extract attribute (hit idx size: {})'.format(len(hit_idxes)))
+        print('\tDone process : extract attribute (hit idx size: {})'.format(len(data.hit_idxes)))
         return data
 
 
@@ -205,7 +227,13 @@ class MaskGraph:
         if(self.mask_rate_node > 0.):
             n_attribute = data.masked_x.size()[1]
             sample_size = int(num_nodes * self.mask_rate_node)
-            masked_node_idxes = random.sample(range(num_nodes), sample_size)
+
+            # masked_node_idxes = random.sample(range(num_nodes), sample_size)
+            G = graph_data_obj_to_nx(data)
+            nodes_rank = nx.pagerank_scipy(G, alpha=0.85)
+            center_node_idxes = sorted([(k, v) for k, v in nodes_rank.items()], 
+                                    key=lambda x: x[1], reverse=False)[0:sample_size]
+            masked_node_idxes = [idx for idx, rank_val in center_node_idxes]                        
 
             masked_node_labels_list = []
             for idx in masked_node_idxes:
@@ -229,7 +257,7 @@ class MaskGraph:
             masked1 = random.sample(edge_pair_list, sample_size)
             masked2 = random.sample(noedge_pair_list, sample_size*ratio_positive_negative)
             masked_edge_idxes = list(masked1) + list(masked2)
-            data.mask_edge_idxes = torch.tensor(
+            data.masked_edge_list = torch.tensor(
                 [[u, v] for u, v in masked_edge_idxes])
             data.mask_edge_label = torch.cat([torch.ones(sample_size, dtype=torch.float),
                                         torch.zeros(sample_size*ratio_positive_negative, 
@@ -351,59 +379,42 @@ def reset_idxes(G):
     return new_G, mapping
 
 
-data_path = 'D:\python\GCN\DeepGraphClustering\data'
-
-
 def remake_to_labelorder(pred_tensor: torch.tensor, label_tensor: torch.tensor) -> dict:
     pred_ = pred_tensor.cuda().cpu().detach().numpy().copy()
     pred_ = np.array([np.argmax(i) for i in pred_])
     label_ = label_tensor.cuda().cpu().detach().numpy().copy()
-    n_of_clusters = max(label_)+1
-    pred_ids, label_ids = {}, {}
-    for vid, (pred_id, label_id) in enumerate(zip(pred_, label_)):
-        if(pred_id in pred_ids):
-            pred_ids[pred_id].append(vid)
+    label_ = np.array([np.argmax(i) for i in label_])
+    num_class = max(label_)+1
+    
+    def make_tree(set_, map_, map_list):
+        if(len(set_) > 0):
+            for i in set_:
+                map_.append(i)
+                set__ = copy.copy(set_)
+                set__.remove(i)
+                make_tree(set__, map_, map_list)
+                map_.remove(i)
         else:
-            pred_ids[pred_id] = []
-            pred_ids[pred_id].append(vid)
-        if(label_id in label_ids):
-            label_ids[label_id].append(vid)
-        else:
-            label_ids[label_id] = []
-            label_ids[label_id].append(vid)
+            map_list.append(map_.copy())
 
-    pred_pairs, label_pairs = [set() for _ in range(n_of_clusters)], [
-        set() for _ in range(n_of_clusters)]
-    for pred_key, label_key in zip(pred_ids.keys(), label_ids.keys()):
-        pred_pairs[pred_key] |= set(
-            [pair for pair in itertools.combinations(pred_ids[pred_key], 2)])
-        label_pairs[label_key] |= set(
-            [pair for pair in itertools.combinations(label_ids[label_key], 2)])
+    label_set = [i for i in range(num_class)]
+    map_list = []
+    make_tree(label_set, [], map_list)
+    
+    acc_max = 0.
+    map_max = None
+    for map_ in map_list:
+        map_ = {cluster_id : class_id for cluster_id, class_id in enumerate(map_)}
+        pred_mapped = list(map(map_.get, pred_))
+        acc = accuracy_score(pred_mapped, label_)
+        if(acc > acc_max):
+            acc_max = acc
+            map_max = map_
 
-    table = np.array([[len(label_pair & pred_pair)
-                       for label_pair in label_pairs] for pred_pair in pred_pairs])
-
-    G = nx.DiGraph()
-    G.add_node('s', demand=-n_of_clusters)
-    G.add_node('t', demand=n_of_clusters)
-    for pred_id in range(n_of_clusters):
-        G.add_edge('s', 'p_{}'.format(pred_id), weight=0, capacity=1)
-    for source, weights in enumerate(table):
-        for target, w in enumerate(weights):
-            G.add_edge('p_{}'.format(source), 'l_{}'.format(
-                target), weight=-w, capacity=1)
-    for label_id in range(n_of_clusters):
-        G.add_edge('l_{}'.format(label_id), 't', weight=0, capacity=1)
-
-    clus_label_map = {}
-    result = nx.min_cost_flow(G)
-    for i, d in result.items():
-        for j, f in d.items():
-            if f and i[0] == 'p' and j[0] == 'l':
-                clus_label_map[int(i[2])] = int(j[2])
-    w = torch.FloatTensor([[1 if j == clus_label_map[i] else 0 for j in range(n_of_clusters)]
-                           for i in range(n_of_clusters)]).cuda()
+    w = torch.FloatTensor([[1 if j == map_max[i] else 0 for j in range(num_class)]
+                           for i in range(num_class)]).cuda()
     return torch.mm(pred_tensor, w)
+
 
 def border_nodes(dataset):
 
@@ -461,7 +472,7 @@ def purity(labels, preds):
         sum += np.amax(table[k])
     return sum/usr_size
 
-def clustering_accuracy(labels, preds, num_class):
+def clustering_accuracy(labels, preds):
     def make_tree(set_, map_, map_list):
         if(len(set_) > 0):
             for i in set_:
@@ -473,19 +484,21 @@ def clustering_accuracy(labels, preds, num_class):
         else:
             map_list.append(map_.copy())
 
+    num_class = np.max(labels) + 1
     label_set = [i for i in range(num_class)]
     map_list = []
     make_tree(label_set, [], map_list)
     
-    acc_max = 0.
+    acc_max, pred_max = 0., None
     for map_ in map_list:
         map_ = {cluster_id : class_id for cluster_id, class_id in enumerate(map_)}
         pred_mapped = list(map(map_.get, preds))
         acc = accuracy_score(pred_mapped, labels)
         if(acc > acc_max):
             acc_max = acc
+            pred_max = pred_mapped
     
-    return acc_max
+    return acc_max, pred_max
 
 
 def encode_onehot(labels):
