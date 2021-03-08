@@ -70,15 +70,7 @@ def train(args, epoch, data, models, optimizers, log):
         pur = purity(label, k_means.labels_)
         log['nmi'].append(nmi)
         log['pur'].append(pur)
-
-    if(epoch==args.epochs): # logging after pretrain
-        acc, pred_mapped = clustering_accuracy(label, k_means.labels_)
-        np.savetxt('./data/experiment/{}/pred_clusters_epoch{}.csv'
-                    .format(args.save_dir, epoch), pred_mapped, fmt='%d')
-        np.savetxt('./data/experiment/{}/label.csv'
-                    .format(args.save_dir), label, fmt='%d')
-        
-        
+                
 
 def main():
 
@@ -93,6 +85,8 @@ def main():
                         help='learning rate (default: 0.001)')
     parser.add_argument('-w', '--weight_decay', type=float, default=5e-4,
                         help='weight decay (default: 5e-4)')
+    parser.add_argument('-dp', '--drop_out', type=float, default=0.5,
+                        help='drop out ratio (default: 0.5)')
     parser.add_argument('-e', '--epochs', type=int, default=500,
                         help='number of epochs to train (defalt: 500)')
     parser.add_argument('-p', '--pretrained_gcn_dir', type=str, default='None',
@@ -124,7 +118,7 @@ def main():
 
     # set up GCN model
     n_attributes = data.masked_x.shape[1]
-    model = GCN(args.model, n_attributes, args.gcn_layer).to(device)
+    model = GCN(args.model, n_attributes, args.gcn_layer, args.drop_out).to(device)
     if(args.pretrained_gcn_dir != 'None'):
         model.load_state_dict(torch.load('./data/experiment/{}/{}/pretrained_gcn'
                                             .format(args.dataset, args.pretrained_gcn_dir)))
