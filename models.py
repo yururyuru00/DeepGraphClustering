@@ -55,23 +55,31 @@ class DGC(nn.Module):
 
 
 class GCN(nn.Module):
-    def __init__(self, model, n_feat, hid):
+    def __init__(self, model, n_feat, hid, dropout):
         torch.manual_seed(0)
         super(GCN, self).__init__()
         self.layers = [n_feat] + hid
-
+        self.n_conv = len(self.layers)-1
+        self.dropout = dropout
+        
         self.gc_layers = torch.nn.ModuleList()
-        for idx in range(len(self.layers)-1):
-            if(model == 'gcn'): # if use GCNConv
+        for idx in range(self.n_conv):
+            if(model == 'gcn'): # if use GCN Conv
                 self.gc_layers.append(GCNConv(self.layers[idx], self.layers[idx+1]))
 
-            else: # if use GINConv
+            else: # if use GIN Conv
                 mlp = nn.Sequential(nn.Linear(self.layers[idx], self.layers[idx]), 
                                     torch.nn.BatchNorm1d(self.layers[idx]), nn.ReLU(),
                                     nn.Linear(self.layers[idx], self.layers[idx+1]))
                 self.gc_layers.append(GINConv(mlp, eps=0., train_eps=False))
 
     def forward(self, x, edge_index):
-        for idx in range(len(self.layers)-1):
+        for idx in range(self.n_conv - 1):
             x = self.gc_layers[idx](x, edge_index)
+            x = F.relu(x)
+            x = F.dropout(x, self.dropout, training=self.training)
+
+        # iff the last convolutional layer, we don't use relu and dropout
+        x = self.gc_layers[-1](x, edge_index)
+
         return x
